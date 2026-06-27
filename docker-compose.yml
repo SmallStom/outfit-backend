@@ -1,0 +1,46 @@
+# 本地开发组合：PostgreSQL + API
+# 如果使用外部数据库（如 212.64.10.45），可将 .env 中的 DATABASE_URL 指向外部地址，
+# 此时 db 服务会启动但不会被使用，或可直接注释掉 db 服务。
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: outfit-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: outfit
+      POSTGRES_PASSWORD: outfit
+      POSTGRES_DB: outfit_db
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - outfit_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outfit -d outfit_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: outfit-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 从 .env 读取，方便切换外部数据库
+      DATABASE_URL: ${DATABASE_URL}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  outfit_pg_data:
