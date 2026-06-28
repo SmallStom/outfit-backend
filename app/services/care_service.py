@@ -166,6 +166,31 @@ async def _completed_this_month(db: AsyncSession, user_id: UUID) -> int:
     return result.scalar() or 0
 
 
+async def get_stats(db: AsyncSession, user_id: UUID) -> dict:
+    result = await db.execute(
+        select(Item).where(
+            Item.user_id == user_id,
+            Item.is_deleted.is_(False),
+            Item.care_method.is_not(None),
+        )
+    )
+    items = list(result.scalars().all())
+    latest_dates = await _latest_care_dates(db, [item.id for item in items])
+
+    pending_count = 0
+    for item in items:
+        reminder = _reminder_for_item(item, latest_dates.get(item.id))
+        if not reminder["done"]:
+            pending_count += 1
+
+    completed_this_month = await _completed_this_month(db, user_id)
+
+    return {
+        "pending_count": pending_count,
+        "completed_this_month": completed_this_month,
+    }
+
+
 async def mark_done(
     db: AsyncSession, user_id: UUID, item_id: UUID
 ) -> None:

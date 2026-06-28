@@ -21,6 +21,8 @@ class UserProfile(BaseModel):
     phone: str | None = None
     nickname: str | None = None
     avatar_url: str | None = None
+    avatar_color: str | None = None
+    bio: str | None = None
     gender: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -29,4 +31,6 @@ class UserProfile(BaseModel):
 class UserProfileUpdate(BaseModel):
     nickname: str | None = None
     avatar_url: str | None = None
+    avatar_color: str | None = None
+    bio: str | None = None
     gender: str | None = None

@@ -17,6 +17,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(nullable=True)
     avatar_color: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    bio: Mapped[str | None] = mapped_column(nullable=True)
     gender: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     items: Mapped[list["Item"]] = relationship(

@@ -15,6 +15,7 @@ from app.api.v1.purchase_preview import router as purchase_preview_router
 from app.api.v1.statistics import router as statistics_router
 from app.api.v1.tryon import router as tryon_router
 from app.api.v1.upload import router as upload_router
+from app.api.v1.users import router as users_router
 from app.api.v1.wear_history import router as wear_history_router
 from app.core.config import settings
 from app.core.exceptions import AppException, app_exception_handler
@@ -32,7 +33,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(tryon_router, prefix="/v1")
     app.include_router(community_router, prefix="/v1")
     app.include_router(favorites_router, prefix="/v1")
+    app.include_router(users_router, prefix="/v1")
     app.include_router(upload_router, prefix="/v1")
 
     app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")

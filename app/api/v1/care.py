@@ -10,7 +10,7 @@ from app.schemas.care import (
     CareReminderResponse,
     CareStats,
 )
-from app.services.care_service import get_reminders, mark_done
+from app.services.care_service import get_reminders, get_stats, mark_done
 
 router = APIRouter(prefix="/care", tags=["care"])
 
@@ -23,6 +23,12 @@ async def reminders(db: DbSession, user_id: CurrentUserId):
         groups=[CareReminderGroup.model_validate(g) for g in data["groups"]],
     )
     return success(data=response.model_dump(by_alias=True))
+
+
+@router.get("/stats")
+async def care_stats(db: DbSession, user_id: CurrentUserId):
+    data = await get_stats(db=db, user_id=UUID(user_id))
+    return success(data=CareStats.model_validate(data).model_dump(by_alias=True))
 
 
 @router.post("/records")

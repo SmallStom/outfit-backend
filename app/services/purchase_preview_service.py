@@ -147,6 +147,23 @@ async def analyze(
     return record
 
 
+async def get_preview(
+    db: AsyncSession, user_id: UUID, preview_id: UUID
+) -> PurchasePreview:
+    result = await db.execute(
+        select(PurchasePreview).where(
+            PurchasePreview.id == preview_id,
+            PurchasePreview.user_id == user_id,
+        )
+    )
+    preview = result.scalar_one_or_none()
+    if preview is None:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("分析记录不存在")
+    return preview
+
+
 async def history(db: AsyncSession, user_id: UUID) -> list[PurchasePreview]:
     result = await db.execute(
         select(PurchasePreview)

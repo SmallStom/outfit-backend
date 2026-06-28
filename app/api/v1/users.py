@@ -1,0 +1,71 @@
+from uuid import UUID
+
+from fastapi import APIRouter
+
+from app.core.responses import success
+from app.db.dependencies import CurrentUserId, DbSession
+from app.schemas.user import (
+    UserListItem,
+    UserStats,
+)
+from app.services.user_service import (
+    get_user_stats,
+    list_followers,
+    list_following,
+    toggle_follow,
+)
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.get("/me/stats")
+async def get_my_stats(db: DbSession, user_id: CurrentUserId):
+    data = await get_user_stats(db=db, user_id=UUID(user_id))
+    return success(data=UserStats.model_validate(data).model_dump(by_alias=True))
+
+
+@router.get("/{target_user_id}/stats")
+async def get_user_stats_endpoint(
+    target_user_id: UUID,
+    db: DbSession,
+):
+    data = await get_user_stats(db=db, user_id=target_user_id)
+    return success(data=UserStats.model_validate(data).model_dump(by_alias=True))
+
+
+@router.post("/{target_user_id}/follow")
+async def follow_user(
+    target_user_id: UUID,
+    db: DbSession,
+    user_id: CurrentUserId,
+):
+    result = await toggle_follow(
+        db=db, current_user_id=UUID(user_id), target_user_id=target_user_id
+    )
+    return success(data=result)
+
+
+@router.get("/{target_user_id}/followers")
+async def get_followers(
+    target_user_id: UUID,
+    db: DbSession,
+):
+    data = await list_followers(db=db, user_id=target_user_id)
+    return success(
+        data=[
+            UserListItem.model_validate(row).model_dump(by_alias=True) for row in data
+        ]
+    )
+
+
+@router.get("/{target_user_id}/following")
+async def get_following(
+    target_user_id: UUID,
+    db: DbSession,
+):
+    data = await list_following(db=db, user_id=target_user_id)
+    return success(
+        data=[
+            UserListItem.model_validate(row).model_dump(by_alias=True) for row in data
+        ]
+    )

@@ -80,6 +80,7 @@ def _post_item(
 def _comment_item(comment: Comment) -> dict:
     return {
         "id": comment.id,
+        "user_id": comment.user_id,
         "user": comment.user_name or "匿名用户",
         "avatar_color": comment.avatar_color,
         "content": comment.content,
@@ -210,6 +211,85 @@ async def create_post(
     await db.commit()
     await db.refresh(post)
     return post
+
+
+async def list_featured_posts(
+    db: AsyncSession,
+    current_user_id: UUID,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    stmt = (
+        select(Post)
+        .where(Post.is_featured.is_(True))
+        .order_by(Post.created_at.desc())
+    )
+
+    count_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+    total = count_result.scalar() or 0
+
+    result = await db.execute(stmt.limit(limit).offset(offset))
+    posts = list(result.scalars().all())
+
+    user_ids = [post.user_id for post in posts]
+    users = {}
+    if user_ids:
+        user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = {u.id: u for u in user_result.scalars().all()}
+
+    liked_set = await _liked_post_ids(db, current_user_id, [p.id for p in posts])
+
+    data = []
+    for post in posts:
+        user = users.get(post.user_id)
+        if user is None:
+            continue
+        data.append(_post_item(post, user, liked_set))
+
+    return data, total
+
+
+async def create_comment(
+    db: AsyncSession, current_user_id: UUID, post_id: UUID, content: str
+) -> Comment:
+    post_result = await db.execute(select(Post).where(Post.id == post_id))
+    post = post_result.scalar_one_or_none()
+    if post is None:
+        raise NotFoundException("帖子不存在")
+
+    user = await _get_user(db, current_user_id)
+    comment = Comment(
+        post_id=post_id,
+        user_id=current_user_id,
+        user_name=_author(user)["name"],
+        avatar_color=_avatar_color(user),
+        content=content,
+    )
+    db.add(comment)
+    post.comment_count = post.comment_count + 1
+    await db.commit()
+    await db.refresh(comment)
+    return comment
+
+
+async def list_comments(
+    db: AsyncSession, post_id: UUID, limit: int = 50, offset: int = 0
+) -> tuple[list[dict], int]:
+    post_result = await db.execute(select(Post).where(Post.id == post_id))
+    if post_result.scalar_one_or_none() is None:
+        raise NotFoundException("帖子不存在")
+
+    stmt = (
+        select(Comment)
+        .where(Comment.post_id == post_id)
+        .order_by(Comment.created_at.asc())
+    )
+    count_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+    total = count_result.scalar() or 0
+
+    result = await db.execute(stmt.limit(limit).offset(offset))
+    comments = [_comment_item(c) for c in result.scalars().all()]
+    return comments, total
 
 
 def style_tags() -> list[str]:

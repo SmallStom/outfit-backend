@@ -9,7 +9,7 @@ from app.schemas.purchase_preview import (
     PurchasePreviewListResponse,
     PurchasePreviewOut,
 )
-from app.services.purchase_preview_service import analyze, history
+from app.services.purchase_preview_service import analyze, get_preview, history
 
 router = APIRouter(prefix="/purchase-preview", tags=["purchase-preview"])
 
@@ -37,4 +37,16 @@ async def purchase_history(db: DbSession, user_id: CurrentUserId):
             ],
             total=len(previews),
         ).model_dump(by_alias=True)
+    )
+
+
+@router.get("/{preview_id}")
+async def get_purchase_preview(
+    preview_id: UUID,
+    db: DbSession,
+    user_id: CurrentUserId,
+):
+    preview = await get_preview(db=db, user_id=UUID(user_id), preview_id=preview_id)
+    return success(
+        data=PurchasePreviewOut.model_validate(preview).model_dump(by_alias=True)
     )

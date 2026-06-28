@@ -24,11 +24,31 @@ class CommentOut(BaseModel):
     )
 
     id: UUID
+    user_id: UUID
     user: str
     avatar_color: str | None = None
     content: str
     like_count: int
     created_at: datetime
+
+
+class CommentListResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    list: list[CommentOut]
+    total: int
+
+
+class CommentCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    content: str
 
 
 class PostListItem(BaseModel):

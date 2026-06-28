@@ -6,6 +6,9 @@ from fastapi import APIRouter, Query
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
 from app.schemas.community import (
+    CommentCreateRequest,
+    CommentListResponse,
+    CommentOut,
     CreatePostRequest,
     LikeResponse,
     PostDetailOut,
@@ -13,8 +16,12 @@ from app.schemas.community import (
     PostListResponse,
 )
 from app.services.community_service import (
+    _comment_item,
+    create_comment,
     create_post,
     get_post_detail,
+    list_comments,
+    list_featured_posts,
     list_posts,
     style_tags,
     toggle_like,
@@ -46,6 +53,24 @@ async def get_posts(
         style=style,
         limit=limit,
         offset=offset,
+    )
+    return success(
+        data=PostListResponse(
+            list=[PostListItem.model_validate(row).model_dump(by_alias=True) for row in data],
+            total=total,
+        ).model_dump(by_alias=True)
+    )
+
+
+@router.get("/posts/featured")
+async def get_featured_posts(
+    db: DbSession,
+    user_id: CurrentUserId,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    data, total = await list_featured_posts(
+        db=db, current_user_id=UUID(user_id), limit=limit, offset=offset
     )
     return success(
         data=PostListResponse(
@@ -94,6 +119,37 @@ async def get_post(
 ):
     data = await get_post_detail(db=db, current_user_id=UUID(user_id), post_id=post_id)
     return success(data=PostDetailOut.model_validate(data).model_dump(by_alias=True))
+
+
+@router.get("/posts/{post_id}/comments")
+async def get_comments(
+    post_id: UUID,
+    db: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    data, total = await list_comments(db=db, post_id=post_id, limit=limit, offset=offset)
+    return success(
+        data=CommentListResponse(
+            list=[CommentOut.model_validate(row).model_dump(by_alias=True) for row in data],
+            total=total,
+        ).model_dump(by_alias=True)
+    )
+
+
+@router.post("/posts/{post_id}/comments")
+async def add_comment(
+    post_id: UUID,
+    body: CommentCreateRequest,
+    db: DbSession,
+    user_id: CurrentUserId,
+):
+    comment = await create_comment(
+        db=db, current_user_id=UUID(user_id), post_id=post_id, content=body.content
+    )
+    return success(
+        data=CommentOut.model_validate(_comment_item(comment)).model_dump(by_alias=True)
+    )
 
 
 @router.post("/posts/{post_id}/like")
