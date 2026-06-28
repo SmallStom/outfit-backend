@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.core.exceptions import AIException
 from app.core.responses import success
@@ -65,8 +65,14 @@ async def create_new_item(
     body: ItemCreate,
     db: DbSession,
     user_id: CurrentUserId,
+    request: Request,
 ):
-    item = await create_item(db=db, user_id=UUID(user_id), data=body)
+    item = await create_item(
+        db=db,
+        user_id=UUID(user_id),
+        data=body,
+        base_url=str(request.base_url),
+    )
     return success(data=ItemOut.model_validate(item).model_dump(by_alias=True))
 
 

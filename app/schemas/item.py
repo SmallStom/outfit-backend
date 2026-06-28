@@ -36,7 +36,7 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
-    pass
+    image: str | None = None
 
 
 class ItemUpdate(BaseModel):

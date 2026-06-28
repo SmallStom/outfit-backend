@@ -1,18 +1,55 @@
-from uuid import UUID
+import base64
+import re
+from pathlib import Path
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.timezone import now_bj
 from app.models.item import Item
 from app.schemas.item import ItemCreate, ItemUpdate
 from app.schemas.wear_history import WearHistoryCreate
+from app.services.cos import is_cos_configured, upload_bytes_to_cos
 from app.services.wear_history_service import create_history
 
 
-async def create_item(db: AsyncSession, user_id: UUID, data: ItemCreate) -> Item:
-    item_data = data.model_dump()
+UPLOAD_DIR = Path("uploads/items")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+_BASE64_IMAGE_RE = re.compile(r"^data:image/(\w+);base64,(.*)$")
+
+
+def _save_base64_image(image_base64: str, base_url: str) -> str:
+    match = _BASE64_IMAGE_RE.match(image_base64)
+    if not match:
+        return image_base64
+
+    mime_ext, b64data = match.groups()
+    ext = "jpg" if mime_ext == "jpeg" else mime_ext
+    try:
+        data = base64.b64decode(b64data)
+    except Exception:
+        raise BadRequestException("图片 base64 解码失败")
+
+    if is_cos_configured():
+        return upload_bytes_to_cos(data, f"image/{mime_ext}", ext)
+
+    filename = f"{uuid4().hex}.{ext}"
+    dest = UPLOAD_DIR / filename
+    dest.write_bytes(data)
+    return f"{base_url.rstrip('/')}/uploads/items/{filename}"
+
+
+async def create_item(
+    db: AsyncSession, user_id: UUID, data: ItemCreate, base_url: str
+) -> Item:
+    item_data = data.model_dump(exclude={"image"})
+    image_url = data.image
+    if image_url and image_url.startswith("data:"):
+        image_url = _save_base64_image(image_url, base_url)
+    item_data["image_url"] = image_url or item_data.get("image_url") or ""
     item = Item(user_id=user_id, wear_count=0, **item_data)
     db.add(item)
     await db.commit()

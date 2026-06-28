@@ -19,7 +19,8 @@ passlib[bcrypt]>=1.7.4
 # HTTP client for WeChat / AI services
 httpx>=0.26.0
 
-# Tencent COS STS (frontend direct upload)
+# Tencent COS STS (frontend direct upload) & backend direct upload
+cos-python-sdk-v5>=1.9.0
 qcloud-python-sts>=3.1.0
 
 # Development / testing
