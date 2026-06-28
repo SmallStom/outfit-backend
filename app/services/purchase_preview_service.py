@@ -116,7 +116,7 @@ async def analyze(
     items = await _user_items(db, user_id)
     candidate = {
         "item_name": data.item_name or _DEFAULT_CANDIDATE["item_name"],
-        "estimated_price": data.estimated_price or _DEFAULT_CANDIDATE["estimated_price"],
+        "estimated_price": _DEFAULT_CANDIDATE["estimated_price"] if data.estimated_price is None else data.estimated_price,
         "category": data.category or _DEFAULT_CANDIDATE["category"],
         "color": data.color or _DEFAULT_CANDIDATE["color"],
         "image_url": data.image_url or _DEFAULT_CANDIDATE["image_url"],

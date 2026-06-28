@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import ForbiddenException, NotFoundException
 from app.core.responses import success
 from app.core.security import create_access_token
 from app.db.dependencies import CurrentUserId, DbSession
@@ -32,20 +32,18 @@ async def login(body: WechatLoginRequest, db: DbSession):
     user = await wechat_login(body.code, db)
     access_token = create_access_token(user.id)
     return success(
-        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump()
+        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump(by_alias=True)
     )
 
 
 @auth_router.post("/dev-login")
 async def dev_login(db: DbSession):
     if settings.app_env == "production":
-        from app.core.exceptions import PermissionDeniedException
-
-        raise PermissionDeniedException("开发登录接口仅在非生产环境可用")
+        raise ForbiddenException("开发登录接口仅在非生产环境可用")
     user = await get_or_create_user_by_openid("dev-user", db)
     access_token = create_access_token(user.id)
     return success(
-        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump()
+        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump(by_alias=True)
     )
 
 
@@ -53,7 +51,7 @@ async def dev_login(db: DbSession):
 async def refresh(user_id: CurrentUserId):
     access_token = create_access_token(user_id)
     return success(
-        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump()
+        data=TokenResponse(access_token=access_token, token_type="bearer").model_dump(by_alias=True)
     )
 
 
@@ -63,7 +61,7 @@ async def get_profile(db: DbSession, user_id: CurrentUserId):
     user = result.scalar_one_or_none()
     if user is None:
         raise NotFoundException("用户不存在")
-    return success(data=UserProfile.model_validate(user).model_dump())
+    return success(data=UserProfile.model_validate(user).model_dump(by_alias=True))
 
 
 @user_router.put("/profile")
@@ -88,7 +86,7 @@ async def update_profile(
         user.gender = body.gender
     await db.commit()
     await db.refresh(user)
-    return success(data=UserProfile.model_validate(user).model_dump())
+    return success(data=UserProfile.model_validate(user).model_dump(by_alias=True))
 
 
 @user_router.get("/settings")
