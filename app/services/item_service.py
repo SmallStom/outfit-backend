@@ -47,9 +47,15 @@ async def create_item(
     db: AsyncSession, user_id: UUID, data: ItemCreate, base_url: str
 ) -> Item:
     item_data = data.model_dump()
+
+    # 处理前端通过 image 字段传入的 base64 图片
+    image_base64 = item_data.pop("image", None)
     image_url = item_data.get("image_url")
-    if image_url and image_url.startswith("data:"):
+    if image_base64 and image_base64.startswith("data:"):
+        image_url = await _save_base64_image(image_base64, base_url)
+    elif image_url and image_url.startswith("data:"):
         image_url = await _save_base64_image(image_url, base_url)
+
     item_data["image_url"] = image_url or ""
     item = Item(user_id=user_id, wear_count=0, **item_data)
     db.add(item)
