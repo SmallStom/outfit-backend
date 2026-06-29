@@ -9,6 +9,7 @@ from app.models.post import Comment, Post, PostLike
 from app.models.purchase_preview import PurchasePreview
 from app.models.settings import UserSettings
 from app.models.tryon_preset import TryonPreset
+from app.models.tryon_result import TryonResult
 from app.models.user import User
 from app.models.wear_history import WearHistory
 
@@ -27,6 +28,7 @@ __all__ = [
     "CareRecord",
     "PurchasePreview",
     "TryonPreset",
+    "TryonResult",
     "Post",
     "PostLike",
     "Comment",

@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,7 +50,33 @@ class TryonGenerateRequest(BaseModel):
         populate_by_name=True,
     )
 
+    mode: str = Field(default="fast", pattern="^(fast|premium)$")
+    person_image_url: str = Field(..., min_length=1)
     top_item_id: UUID | None = None
     bottom_item_id: UUID | None = None
     outer_item_id: UUID | None = None
-    shoes_item_id: UUID | None = None
+
+
+class TryonGenerateResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: UUID
+    task_id: str
+    status: str
+
+
+class TryonResultOut(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: UUID
+    mode: str
+    status: str
+    result_image_url: str | None = None
+    error_message: str | None = None
+    created_at: datetime

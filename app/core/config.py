@@ -42,12 +42,20 @@ class Settings(BaseSettings):
     )
     ai_model: str = Field(default="qwen-vl-max", alias="AI_MODEL")
 
-    # Aliyun virtual try-on
+    # Aliyun virtual try-on (DashScope/Bailian OutfitAnyone)
     aliyun_access_key_id: str = Field(default="", alias="ALIYUN_ACCESS_KEY_ID")
     aliyun_access_key_secret: str = Field(default="", alias="ALIYUN_ACCESS_KEY_SECRET")
     aliyun_tryon_endpoint: str = Field(
         default="https://facebody.cn-shanghai.aliyuncs.com", alias="ALIYUN_TRYON_ENDPOINT"
     )
+
+    # DashScope/Bailian virtual try-on
+    tryon_api_key: str = Field(default="", alias="TRYON_API_KEY")
+    tryon_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/api/v1", alias="TRYON_BASE_URL"
+    )
+    tryon_fast_model: str = Field(default="aitryon", alias="TRYON_FAST_MODEL")
+    tryon_premium_model: str = Field(default="aitryon-plus", alias="TRYON_PREMIUM_MODEL")
 
 
 settings = Settings()
