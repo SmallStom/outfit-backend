@@ -312,6 +312,31 @@ async def get_tryon_result(
     return tryon_result
 
 
+def _extract_tryon_image_url(output: dict) -> str | None:
+    """从阿里云不同版本响应结构中提取结果图 URL。"""
+    # 1. VL/聊天式返回结构
+    choices = output.get("choices", [])
+    if choices and isinstance(choices, list):
+        content = choices[0].get("message", {}).get("content", [])
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "image":
+                return c.get("image")
+
+    # 2. results 数组结构（如 text2image）
+    results = output.get("results", [])
+    if isinstance(results, list) and results:
+        first = results[0]
+        if isinstance(first, dict):
+            return first.get("url") or first.get("image_url")
+
+    # 3. results 对象结构（aitryon-plus 可能直接返回对象）
+    if isinstance(results, dict):
+        return results.get("image_url") or results.get("url")
+
+    # 4. output 顶层字段兜底
+    return output.get("image_url") or output.get("url")
+
+
 async def refresh_tryon_result(
     db: AsyncSession, tryon_result: TryonResult
 ) -> TryonResult:
@@ -340,23 +365,11 @@ async def refresh_tryon_result(
     tryon_result.status = status
 
     if status == "succeeded":
-        image_url = None
-        choices = output.get("choices", [])
-        if choices and isinstance(choices, list):
-            content = choices[0].get("message", {}).get("content", [])
-            for c in content:
-                if isinstance(c, dict) and c.get("type") == "image":
-                    image_url = c.get("image")
-                    break
-        # 兼容旧版返回结构
-        if not image_url:
-            results = output.get("results", [])
-            if results and isinstance(results, list):
-                image_url = results[0].get("url")
+        image_url = _extract_tryon_image_url(output)
         tryon_result.result_image_url = image_url
         if not image_url:
             tryon_result.status = "failed"
-            tryon_result.error_message = "服务未返回结果图片"
+            tryon_result.error_message = f"服务未返回结果图片，原始响应: {data}"
     elif status == "failed":
         tryon_result.error_message = output.get("message", "生成失败")
 
