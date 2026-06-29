@@ -45,11 +45,11 @@ def _save_base64_image(image_base64: str, base_url: str) -> str:
 async def create_item(
     db: AsyncSession, user_id: UUID, data: ItemCreate, base_url: str
 ) -> Item:
-    item_data = data.model_dump(exclude={"image"})
-    image_url = data.image
+    item_data = data.model_dump()
+    image_url = item_data.get("image_url")
     if image_url and image_url.startswith("data:"):
         image_url = _save_base64_image(image_url, base_url)
-    item_data["image_url"] = image_url or item_data.get("image_url") or ""
+    item_data["image_url"] = image_url or ""
     item = Item(user_id=user_id, wear_count=0, **item_data)
     db.add(item)
     await db.commit()
@@ -101,10 +101,17 @@ async def get_item(db: AsyncSession, user_id: UUID, item_id: UUID) -> Item:
 
 
 async def update_item(
-    db: AsyncSession, user_id: UUID, item_id: UUID, data: ItemUpdate
+    db: AsyncSession,
+    user_id: UUID,
+    item_id: UUID,
+    data: ItemUpdate,
+    base_url: str,
 ) -> Item:
     item = await get_item(db, user_id, item_id)
     update_data = data.model_dump(exclude_unset=True)
+    image_url = update_data.get("image_url")
+    if image_url and image_url.startswith("data:"):
+        update_data["image_url"] = _save_base64_image(image_url, base_url)
     for key, value in update_data.items():
         setattr(item, key, value)
     await db.commit()

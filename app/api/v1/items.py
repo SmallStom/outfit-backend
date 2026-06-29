@@ -92,9 +92,14 @@ async def update_existing_item(
     body: ItemUpdate,
     db: DbSession,
     user_id: CurrentUserId,
+    request: Request,
 ):
     item = await update_item(
-        db=db, user_id=UUID(user_id), item_id=item_id, data=body
+        db=db,
+        user_id=UUID(user_id),
+        item_id=item_id,
+        data=body,
+        base_url=str(request.base_url),
     )
     return success(data=ItemOut.model_validate(item).model_dump(by_alias=True))
 
