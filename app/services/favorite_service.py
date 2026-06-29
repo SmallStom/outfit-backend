@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
@@ -77,7 +78,13 @@ async def toggle_favorite_post(
     if fav:
         await db.delete(fav)
     else:
-        db.add(FavoritePost(user_id=user_id, post_id=post_id))
+        await db.execute(
+            insert(FavoritePost)
+            .values(user_id=user_id, post_id=post_id)
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "post_id"]
+            )
+        )
     await db.commit()
 
 
@@ -105,5 +112,11 @@ async def toggle_favorite_item(
     if fav:
         await db.delete(fav)
     else:
-        db.add(FavoriteItem(user_id=user_id, item_id=item_id))
+        await db.execute(
+            insert(FavoriteItem)
+            .values(user_id=user_id, item_id=item_id)
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "item_id"]
+            )
+        )
     await db.commit()

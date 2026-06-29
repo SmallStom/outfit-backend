@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
-from app.schemas.tryon import TryonItem, TryonPreset, TryonPresetItem
+from app.schemas.tryon import TryonGenerateRequest, TryonItem, TryonPreset, TryonPresetItem
 from app.services.tryon_service import (
     categories,
     generate_presets,
@@ -63,5 +63,8 @@ async def get_presets(db: DbSession, user_id: CurrentUserId):
 
 
 @router.post("/generate")
-async def tryon_generate(body: dict):
-    await generate_tryon(**body)
+async def tryon_generate(
+    body: TryonGenerateRequest,
+    user_id: CurrentUserId,
+):
+    await generate_tryon(user_id=user_id, **body.model_dump())

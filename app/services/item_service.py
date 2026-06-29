@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import re
 from pathlib import Path
@@ -21,7 +22,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _BASE64_IMAGE_RE = re.compile(r"^data:image/(\w+);base64,(.*)$")
 
 
-def _save_base64_image(image_base64: str, base_url: str) -> str:
+async def _save_base64_image(image_base64: str, base_url: str) -> str:
     match = _BASE64_IMAGE_RE.match(image_base64)
     if not match:
         return image_base64
@@ -34,11 +35,11 @@ def _save_base64_image(image_base64: str, base_url: str) -> str:
         raise BadRequestException("图片 base64 解码失败")
 
     if is_cos_configured():
-        return upload_bytes_to_cos(data, f"image/{mime_ext}", ext)
+        return await upload_bytes_to_cos(data, f"image/{mime_ext}", ext)
 
     filename = f"{uuid4().hex}.{ext}"
     dest = UPLOAD_DIR / filename
-    dest.write_bytes(data)
+    await asyncio.to_thread(dest.write_bytes, data)
     return f"{base_url.rstrip('/')}/uploads/items/{filename}"
 
 
@@ -48,7 +49,7 @@ async def create_item(
     item_data = data.model_dump()
     image_url = item_data.get("image_url")
     if image_url and image_url.startswith("data:"):
-        image_url = _save_base64_image(image_url, base_url)
+        image_url = await _save_base64_image(image_url, base_url)
     item_data["image_url"] = image_url or ""
     item = Item(user_id=user_id, wear_count=0, **item_data)
     db.add(item)
@@ -108,10 +109,10 @@ async def update_item(
     base_url: str,
 ) -> Item:
     item = await get_item(db, user_id, item_id)
-    update_data = data.model_dump(exclude_unset=True)
+    update_data = data.model_dump(exclude={"item_ids"}, exclude_unset=True)
     image_url = update_data.get("image_url")
     if image_url and image_url.startswith("data:"):
-        update_data["image_url"] = _save_base64_image(image_url, base_url)
+        update_data["image_url"] = await _save_base64_image(image_url, base_url)
     for key, value in update_data.items():
         setattr(item, key, value)
     await db.commit()
@@ -126,10 +127,10 @@ async def delete_item(db: AsyncSession, user_id: UUID, item_id: UUID) -> None:
 
 
 async def record_wear(db: AsyncSession, user_id: UUID, item_id: UUID) -> Item:
+    # 先校验衣物存在且属于当前用户
     item = await get_item(db, user_id, item_id)
-    item.wear_count += 1
-    item.last_worn_at = now_bj()
-    await db.flush()
+
+    # 复用 create_history：它会校验归属、写入历史并原子更新穿着统计
     await create_history(
         db=db,
         user_id=user_id,
@@ -141,9 +142,10 @@ async def record_wear(db: AsyncSession, user_id: UUID, item_id: UUID) -> Item:
             note="记录穿着",
         ),
     )
-    await db.commit()
-    await db.refresh(item)
-    return item
+
+    # 重新读取以获取更新后的 wear_count / last_worn_at
+    refreshed = await db.execute(select(Item).where(Item.id == item_id))
+    return refreshed.scalar_one()
 
 
 COMMON_TAGS = [

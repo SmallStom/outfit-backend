@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,6 +42,12 @@ class PostLike(Base, UUIDMixin):
         ForeignKey("posts.id", ondelete="CASCADE"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(default=now_bj)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "post_id", name="uq_post_likes_user_post"
+        ),
+    )
 
 
 class Comment(Base, UUIDMixin):

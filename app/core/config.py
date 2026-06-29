@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     debug: bool = Field(default=True, alias="DEBUG")
 
+    # CORS
+    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+
     # Database
     database_url: str = Field(alias="DATABASE_URL")
 

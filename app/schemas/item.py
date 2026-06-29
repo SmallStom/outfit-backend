@@ -16,21 +16,21 @@ class ItemBase(BaseModel):
         from_attributes=True,
     )
 
-    name: str
-    category: str
-    sub_category: str | None = None
+    name: str = Field(..., max_length=100)
+    category: str = Field(..., max_length=20)
+    sub_category: str | None = Field(default=None, max_length=30)
     image_url: str = ""
     thumbnail_url: str | None = None
-    image_color: str | None = None
+    image_color: str | None = Field(default=None, max_length=10)
     price: int | None = None
-    brand: str | None = None
-    material: str | None = None
-    color: str | None = None
-    color_hex: str | None = None
-    season: str | None = None
-    care_method: str | None = None
+    brand: str | None = Field(default=None, max_length=100)
+    material: str | None = Field(default=None, max_length=200)
+    color: str | None = Field(default=None, max_length=50)
+    color_hex: str | None = Field(default=None, max_length=10)
+    season: str | None = Field(default=None, max_length=50)
+    care_method: str | None = Field(default=None, max_length=20)
     care_detail: str | None = None
-    occasion: str | None = None
+    occasion: str | None = Field(default=None, max_length=200)
     purchase_date: date | None = None
     tags: list[str] | None = Field(default_factory=list)
 
@@ -45,21 +45,21 @@ class ItemUpdate(BaseModel):
         populate_by_name=True,
     )
 
-    name: str | None = None
-    category: str | None = None
-    sub_category: str | None = None
+    name: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=20)
+    sub_category: str | None = Field(default=None, max_length=30)
     image_url: str | None = None
     thumbnail_url: str | None = None
-    image_color: str | None = None
+    image_color: str | None = Field(default=None, max_length=10)
     price: int | None = None
-    brand: str | None = None
-    material: str | None = None
-    color: str | None = None
-    color_hex: str | None = None
-    season: str | None = None
-    care_method: str | None = None
+    brand: str | None = Field(default=None, max_length=100)
+    material: str | None = Field(default=None, max_length=200)
+    color: str | None = Field(default=None, max_length=50)
+    color_hex: str | None = Field(default=None, max_length=10)
+    season: str | None = Field(default=None, max_length=50)
+    care_method: str | None = Field(default=None, max_length=20)
     care_detail: str | None = None
-    occasion: str | None = None
+    occasion: str | None = Field(default=None, max_length=200)
     purchase_date: date | None = None
     tags: list[str] | None = None
 

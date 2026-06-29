@@ -1,3 +1,6 @@
+import logging
+import traceback
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,9 +33,14 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
+    cors_origins = (
+        [origin.strip() for origin in settings.cors_origins.split(",")]
+        if settings.cors_origins
+        else []
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -55,9 +63,22 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logging.error(
+            "Unhandled exception at %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=True,
+        )
+        if settings.debug:
+            message = f"服务器内部错误: {exc}"
+            data = {"traceback": traceback.format_exc()}
+        else:
+            message = "服务器内部错误"
+            data = None
         return JSONResponse(
             status_code=500,
-            content={"code": 9999, "message": "服务器内部错误", "data": None},
+            content={"code": 9999, "message": message, "data": data},
         )
 
     app.include_router(auth_router, prefix="/v1")

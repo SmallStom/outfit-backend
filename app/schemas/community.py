@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.common import to_camel
 
 
+_MAX_TITLE_LENGTH = 200
+_MAX_COMMENT_LENGTH = 1000
+
+
 class Author(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -48,7 +52,7 @@ class CommentCreateRequest(BaseModel):
         populate_by_name=True,
     )
 
-    content: str
+    content: str = Field(..., max_length=_MAX_COMMENT_LENGTH)
 
 
 class PostListItem(BaseModel):
@@ -95,13 +99,13 @@ class CreatePostRequest(BaseModel):
         populate_by_name=True,
     )
 
-    title: str
-    content: str | None = None
+    title: str = Field(..., max_length=_MAX_TITLE_LENGTH)
+    content: str | None = Field(default=None, max_length=2000)
     images: list[str] = Field(default_factory=list)
-    cover_color: str | None = None
+    cover_color: str | None = Field(default=None, max_length=10)
     img_height: int | None = None
-    style: str | None = None
-    city: str | None = None
+    style: str | None = Field(default=None, max_length=20)
+    city: str | None = Field(default=None, max_length=50)
     tags: list[str] = Field(default_factory=list)
 
 

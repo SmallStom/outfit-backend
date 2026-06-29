@@ -1,11 +1,10 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.core.timezone import now_bj
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -14,7 +13,7 @@ def create_access_token(user_id: UUID, expires_delta: timedelta | None = None) -
     """签发 JWT Access Token"""
     if expires_delta is None:
         expires_delta = timedelta(days=settings.access_token_expire_days)
-    expire = now_bj() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     to_encode = {
         "sub": str(user_id),
         "type": "access",

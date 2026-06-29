@@ -2,6 +2,7 @@ import hashlib
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
@@ -178,13 +179,22 @@ async def toggle_like(
 
     if like:
         await db.delete(like)
-        post.like_count = max(0, post.like_count - 1)
         is_liked = False
     else:
-        db.add(PostLike(user_id=current_user_id, post_id=post_id))
-        post.like_count = post.like_count + 1
+        await db.execute(
+            insert(PostLike)
+            .values(user_id=current_user_id, post_id=post_id)
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "post_id"]
+            )
+        )
         is_liked = True
 
+    # 重新计算点赞数，避免并发下的计数漂移
+    count_result = await db.execute(
+        select(func.count(PostLike.id)).where(PostLike.post_id == post_id)
+    )
+    post.like_count = count_result.scalar() or 0
     await db.commit()
     await db.refresh(post)
     return {"is_liked": is_liked, "like_count": post.like_count}

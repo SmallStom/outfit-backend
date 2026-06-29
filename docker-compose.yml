@@ -7,17 +7,18 @@ services:
     container_name: outfit-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: outfit
-      POSTGRES_PASSWORD: outfit
-      POSTGRES_DB: outfit_db
+      POSTGRES_USER: ${POSTGRES_USER:-outfit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-outfit}
+      POSTGRES_DB: ${POSTGRES_DB:-outfit_db}
       TZ: Asia/Shanghai
       PGTZ: Asia/Shanghai
+    # 仅在本地开发时暴露，生产环境建议删除或绑定 127.0.0.1
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - outfit_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U outfit -d outfit_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-outfit} -d ${POSTGRES_DB:-outfit_db}"]
       interval: 5s
       timeout: 5s
       retries: 5

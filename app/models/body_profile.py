@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,3 +27,12 @@ class BodyProfile(Base, UUIDMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     size_advice: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     advice: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_body_profiles_user_active",
+            "user_id",
+            postgresql_where=(is_active.is_(True)),
+            unique=True,
+        ),
+    )

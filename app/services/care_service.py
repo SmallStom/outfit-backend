@@ -192,7 +192,12 @@ async def get_stats(db: AsyncSession, user_id: UUID) -> dict:
 
 
 async def mark_done(
-    db: AsyncSession, user_id: UUID, item_id: UUID
+    db: AsyncSession,
+    user_id: UUID,
+    item_id: UUID,
+    care_type: str | None = None,
+    care_date: date | None = None,
+    notes: str | None = None,
 ) -> None:
     result = await db.execute(
         select(Item).where(
@@ -205,12 +210,11 @@ async def mark_done(
     if item is None:
         raise NotFoundException("衣物不存在")
 
-    care_type = item.care_method or "machine_wash"
     record = CareRecord(
         item_id=item_id,
-        care_type=care_type,
-        care_date=now_bj().date(),
-        notes="标记已完成洗护",
+        care_type=care_type or item.care_method or "machine_wash",
+        care_date=care_date or now_bj().date(),
+        notes=notes or "标记已完成洗护",
     )
     db.add(record)
     await db.commit()

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -47,6 +47,12 @@ class OutfitItem(Base, UUIDMixin):
     outfit: Mapped["Outfit"] = relationship("Outfit", back_populates="items")
     item: Mapped["Item"] = relationship("Item", lazy="selectin")
 
+    __table_args__ = (
+        UniqueConstraint(
+            "outfit_id", "item_id", name="uq_outfit_items_outfit_item"
+        ),
+    )
+
 
 class OutfitCollection(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "outfit_collections"
@@ -83,3 +89,9 @@ class OutfitCollectionItem(Base, UUIDMixin):
         "OutfitCollection", back_populates="items"
     )
     item: Mapped["Item"] = relationship("Item", lazy="selectin")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id", "item_id", name="uq_outfit_collection_items_collection_item"
+        ),
+    )

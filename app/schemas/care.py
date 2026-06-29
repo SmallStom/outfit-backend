@@ -13,9 +13,9 @@ class CareRecordCreate(BaseModel):
     )
 
     item_id: UUID
-    care_type: str | None = None
-    care_date: date | None = None
-    notes: str | None = None
+    care_type: str = Field(..., max_length=20)
+    care_date: date
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 class CareReminderItem(BaseModel):

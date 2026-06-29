@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 from app.core.config import settings
@@ -16,7 +17,7 @@ def is_cos_configured() -> bool:
     return _cos_configured()
 
 
-def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
+async def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
     """后端直传文件到 COS，返回公网可访问 URL。"""
     if not _cos_configured():
         raise BadRequestException("COS 未配置，请使用 /upload/local 本地上传接口")
@@ -32,7 +33,8 @@ def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
 
     date_folder = now_bj().strftime("%Y-%m-%d")
     key = f"items/{date_folder}/{uuid4().hex}.{ext}"
-    client.put_object(
+    await asyncio.to_thread(
+        client.put_object,
         Bucket=settings.cos_bucket,
         Body=data,
         Key=key,
@@ -42,7 +44,7 @@ def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
     return f"https://{settings.cos_bucket}.cos.{settings.cos_region}.myqcloud.com/{key}"
 
 
-def get_cos_sts_credentials(user_id: str) -> dict:
+async def get_cos_sts_credentials(user_id: str) -> dict:
     """生成腾讯云 COS 临时上传凭证；未配置密钥时抛出异常。"""
     if not _cos_configured():
         raise BadRequestException("COS 未配置，请使用 /upload/local 本地上传接口")
@@ -62,4 +64,4 @@ def get_cos_sts_credentials(user_id: str) -> dict:
         ],
     }
     sts = Sts(config)
-    return sts.get_credential()
+    return await asyncio.to_thread(sts.get_credential)

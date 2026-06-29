@@ -23,6 +23,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "httpx>=0.26.0",
     "qcloud-python-sts>=3.1.0",
+    "cos-python-sdk-v5>=5.0.0",
 ]
 
 [project.optional-dependencies]

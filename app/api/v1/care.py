@@ -37,5 +37,12 @@ async def create_care_record(
     user_id: CurrentUserId,
     body: CareRecordCreate,
 ):
-    await mark_done(db=db, user_id=UUID(user_id), item_id=body.item_id)
+    await mark_done(
+        db=db,
+        user_id=UUID(user_id),
+        item_id=body.item_id,
+        care_type=body.care_type,
+        care_date=body.care_date,
+        notes=body.notes,
+    )
     return success(data={"success": True})

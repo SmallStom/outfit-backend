@@ -30,7 +30,7 @@ async def get_history(
         occasion=occasion,
         start_date=start_date,
     )
-    data = await build_history_list_response(db, histories)
+    data = await build_history_list_response(db, UUID(user_id), histories)
     return success(data={"list": data, "total": len(data)})
 
 
@@ -41,7 +41,7 @@ async def get_recent_history(
     days: Annotated[int, Query(ge=1, le=365)] = 7,
 ):
     histories = await recent_history(db=db, user_id=UUID(user_id), days=days)
-    data = await build_history_list_response(db, histories)
+    data = await build_history_list_response(db, UUID(user_id), histories)
     return success(data={"list": data, "total": len(data)})
 
 
@@ -52,5 +52,5 @@ async def add_history(
     user_id: CurrentUserId,
 ):
     history = await create_history(db=db, user_id=UUID(user_id), data=body)
-    data = await build_history_list_response(db, [history])
+    data = await build_history_list_response(db, UUID(user_id), [history])
     return success(data=data[0])

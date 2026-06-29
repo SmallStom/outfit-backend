@@ -16,11 +16,11 @@ class OutfitItemEntry(CamelBaseModel):
 
 
 class OutfitBase(CamelBaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     cover_url: str | None = None
-    cover_color: str | None = None
-    occasion: str | None = None
-    weather: str | None = None
+    cover_color: str | None = Field(default=None, max_length=10)
+    occasion: str | None = Field(default=None, max_length=50)
+    weather: str | None = Field(default=None, max_length=20)
     is_ai_generated: bool = False
     color_scheme: list[str] | None = None
 
@@ -35,11 +35,11 @@ class OutfitUpdate(BaseModel):
         populate_by_name=True,
     )
 
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     cover_url: str | None = None
-    cover_color: str | None = None
-    occasion: str | None = None
-    weather: str | None = None
+    cover_color: str | None = Field(default=None, max_length=10)
+    occasion: str | None = Field(default=None, max_length=50)
+    weather: str | None = Field(default=None, max_length=20)
     is_ai_generated: bool | None = None
     color_scheme: list[str] | None = None
     item_ids: list[UUID] | None = None
@@ -58,10 +58,10 @@ class OutfitListResponse(CamelBaseModel):
 
 
 class OutfitCollectionBase(CamelBaseModel):
-    name: str
+    name: str = Field(..., max_length=100)
     desc: str | None = None
     cover_url: str | None = None
-    cover_color: str | None = None
+    cover_color: str | None = Field(default=None, max_length=10)
 
 
 class OutfitCollectionCreate(OutfitCollectionBase):
@@ -74,10 +74,10 @@ class OutfitCollectionUpdate(BaseModel):
         populate_by_name=True,
     )
 
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     desc: str | None = None
     cover_url: str | None = None
-    cover_color: str | None = None
+    cover_color: str | None = Field(default=None, max_length=10)
     item_ids: list[UUID] | None = None
 
 

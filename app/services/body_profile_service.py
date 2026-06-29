@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
@@ -21,9 +21,18 @@ async def create_profile(
 ) -> BodyProfile:
     profile_data = data.model_dump()
     profile = BodyProfile(user_id=user_id, **profile_data)
-    if profile.is_active:
-        await _deactivate_others(db, user_id)
     db.add(profile)
+    await db.flush()
+    if profile.is_active:
+        await db.execute(
+            update(BodyProfile)
+            .where(
+                BodyProfile.user_id == user_id,
+                BodyProfile.id != profile.id,
+                BodyProfile.is_active.is_(True),
+            )
+            .values(is_active=False)
+        )
     await db.commit()
     await db.refresh(profile)
     return profile
@@ -64,7 +73,15 @@ async def update_profile(
     for key, value in update_data.items():
         setattr(profile, key, value)
     if data.is_active:
-        await _deactivate_others(db, user_id, exclude_id=profile.id)
+        await db.execute(
+            update(BodyProfile)
+            .where(
+                BodyProfile.user_id == user_id,
+                BodyProfile.id != profile_id,
+                BodyProfile.is_active.is_(True),
+            )
+            .values(is_active=False)
+        )
     await db.commit()
     await db.refresh(profile)
     return profile
@@ -82,22 +99,16 @@ async def activate_profile(
     db: AsyncSession, user_id: UUID, profile_id: UUID
 ) -> BodyProfile:
     profile = await get_profile(db, user_id, profile_id)
-    await _deactivate_others(db, user_id, exclude_id=profile.id)
+    await db.execute(
+        update(BodyProfile)
+        .where(
+            BodyProfile.user_id == user_id,
+            BodyProfile.id != profile_id,
+            BodyProfile.is_active.is_(True),
+        )
+        .values(is_active=False)
+    )
     profile.is_active = True
     await db.commit()
     await db.refresh(profile)
     return profile
-
-
-async def _deactivate_others(
-    db: AsyncSession, user_id: UUID, exclude_id: UUID | None = None
-) -> None:
-    stmt = select(BodyProfile).where(
-        BodyProfile.user_id == user_id, BodyProfile.is_active.is_(True)
-    )
-    if exclude_id:
-        stmt = stmt.where(BodyProfile.id != exclude_id)
-    result = await db.execute(stmt)
-    for profile in result.scalars().all():
-        profile.is_active = False
-    await db.flush()

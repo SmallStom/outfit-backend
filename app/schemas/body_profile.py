@@ -1,26 +1,26 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import CamelBaseModel, to_camel
 
 
 class BodyProfileBase(CamelBaseModel):
-    name: str
-    height: float | None = None
-    weight: float | None = None
-    shoulder_width: float | None = None
-    chest: float | None = None
-    waist: float | None = None
-    hip: float | None = None
-    body_type: str | None = None
-    body_type_label: str | None = None
+    name: str = Field(..., max_length=50)
+    height: float | None = Field(default=None, gt=0, le=300)
+    weight: float | None = Field(default=None, gt=0, le=500)
+    shoulder_width: float | None = Field(default=None, gt=0, le=200)
+    chest: float | None = Field(default=None, gt=0, le=200)
+    waist: float | None = Field(default=None, gt=0, le=200)
+    hip: float | None = Field(default=None, gt=0, le=200)
+    body_type: str | None = Field(default=None, max_length=30)
+    body_type_label: str | None = Field(default=None, max_length=30)
     photo_url: str | None = None
-    photo_color: str | None = None
+    photo_color: str | None = Field(default=None, max_length=10)
     is_active: bool = False
     size_advice: dict | None = None
-    advice: str | None = None
+    advice: str | None = Field(default=None, max_length=500)
 
 
 class BodyProfileCreate(BodyProfileBase):
