@@ -29,7 +29,7 @@ user_router = APIRouter(prefix="/user", tags=["user"])
 
 @auth_router.post("/login")
 async def login(body: WechatLoginRequest, db: DbSession):
-    user = await wechat_login(body.code, db)
+    user = await wechat_login(body.code, db, invite_code=body.invite_code)
     access_token = create_access_token(user.id)
     return success(
         data=TokenResponse(access_token=access_token, token_type="bearer").model_dump(by_alias=True)
@@ -38,8 +38,9 @@ async def login(body: WechatLoginRequest, db: DbSession):
 
 @auth_router.post("/dev-login")
 async def dev_login(db: DbSession):
-    if settings.app_env == "production":
-        raise ForbiddenException("开发登录接口仅在非生产环境可用")
+    # 仅在调试模式且未启用生产环境时开放，避免配置误用导致后门
+    if settings.app_env == "production" or not settings.debug:
+        raise ForbiddenException("开发登录接口不可用")
     user = await get_or_create_user_by_openid("dev-user", db)
     access_token = create_access_token(user.id)
     return success(

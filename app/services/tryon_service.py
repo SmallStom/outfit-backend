@@ -1,3 +1,8 @@
+import ipaddress
+import logging
+import socket
+from urllib.parse import urlparse
+
 import httpx
 from uuid import UUID
 
@@ -5,10 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import AIException, BadRequestException, NotFoundException
+from app.core.exceptions import AIException, BadRequestException, ForbiddenException, NotFoundException
 from app.models.item import Item
 from app.models.tryon_preset import TryonPreset
 from app.models.tryon_result import TryonResult
+from app.services.quota_service import deduct_for_tryon
+from app.services.task_service import complete_task
+
+logger = logging.getLogger(__name__)
 
 _CATEGORIES = [
     {"key": "top", "label": "上装"},
@@ -188,14 +197,38 @@ def _resolve_garment_urls(
     return top_url, bottom_url
 
 
+def _is_private_host(hostname: str) -> bool:
+    """判断主机名是否为内网/回环/本地地址。"""
+    if not hostname:
+        return True
+    lowered = hostname.lower()
+    if lowered in ("localhost", "0.0.0.0", "::"):
+        return True
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+    except OSError:
+        # 无法解析的域名按不可信处理
+        return True
+    for _, _, _, _, sockaddr in addr_info:
+        ip = sockaddr[0]
+        try:
+            if ipaddress.ip_address(ip).is_private or ipaddress.ip_address(ip).is_loopback:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _validate_public_url(url: str | None, name: str) -> None:
     if not url:
         return
-    if url.startswith(("http://", "https://")):
-        return
-    raise BadRequestException(
-        f"{name} 必须是公网可访问的 http/https URL，本地路径无法被阿里云识别"
-    )
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise BadRequestException(
+            f"{name} 必须是公网可访问的 http/https URL，本地路径无法被阿里云识别"
+        )
+    if _is_private_host(parsed.hostname):
+        raise BadRequestException(f"{name} 不能指向内网、回环或不可解析的地址")
 
 
 async def generate_tryon(
@@ -210,6 +243,11 @@ async def generate_tryon(
     """提交阿里云 OutfitAnyone 虚拟试衣任务。"""
     if not settings.tryon_api_key:
         raise AIException("虚拟试衣服务尚未配置 API Key")
+
+    # 额度校验与扣减
+    quota = await deduct_for_tryon(db=db, user_id=user_id)
+    if not quota.get("allowed") or not quota.get("deducted"):
+        raise ForbiddenException("AI 试穿次数已用完，请开通会员或购买积分")
 
     model = (
         settings.tryon_premium_model
@@ -266,7 +304,8 @@ async def generate_tryon(
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        raise AIException(f"虚拟试衣任务提交失败: {exc.response.text}") from exc
+        logger.error("虚拟试衣任务提交失败: %s - %s", exc.response.status_code, exc.response.text)
+        raise AIException("虚拟试衣任务提交失败，请稍后重试") from exc
     except httpx.RequestError as exc:
         raise AIException("虚拟试衣服务网络异常", timeout=True) from exc
 
@@ -356,7 +395,8 @@ async def refresh_tryon_result(
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        raise AIException(f"查询虚拟试衣任务失败: {exc.response.text}") from exc
+        logger.error("查询虚拟试衣任务失败: %s - %s", exc.response.status_code, exc.response.text)
+        raise AIException("查询虚拟试衣任务失败，请稍后重试") from exc
     except httpx.RequestError as exc:
         raise AIException("虚拟试衣服务网络异常", timeout=True) from exc
 
@@ -369,12 +409,19 @@ async def refresh_tryon_result(
         tryon_result.result_image_url = image_url
         if not image_url:
             tryon_result.status = "failed"
-            tryon_result.error_message = f"服务未返回结果图片，原始响应: {data}"
+            logger.error("虚拟试衣服务未返回结果图片: %s", data)
+            tryon_result.error_message = "服务未返回结果图片"
     elif status == "failed":
-        tryon_result.error_message = output.get("message", "生成失败")
+        logger.error("虚拟试衣任务失败: %s", output)
+        tryon_result.error_message = "虚拟试衣生成失败"
 
     await db.commit()
     await db.refresh(tryon_result)
+
+    # 在独立事务中触发首次 AI 试穿任务，避免嵌套提交
+    if status == "succeeded" and tryon_result.result_image_url:
+        await complete_task(db=db, user_id=tryon_result.user_id, trigger_event="first_tryon")
+
     return tryon_result
 
 

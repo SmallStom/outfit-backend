@@ -95,6 +95,9 @@ async def create_history(
     return history
 
 
+_MAX_HISTORY_LIMIT = 500
+
+
 async def list_history(
     db: AsyncSession,
     user_id: UUID,
@@ -105,6 +108,7 @@ async def list_history(
         select(WearHistory)
         .where(WearHistory.user_id == user_id)
         .order_by(WearHistory.date.desc())
+        .limit(_MAX_HISTORY_LIMIT)
     )
     if occasion and occasion != "all":
         stmt = stmt.where(WearHistory.occasion == occasion)

@@ -10,10 +10,10 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="development", alias="APP_ENV")
-    debug: bool = Field(default=True, alias="DEBUG")
+    debug: bool = Field(default=False, alias="DEBUG")
 
     # CORS
-    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+    cors_origins: str = Field(default="", alias="CORS_ORIGINS")
 
     # Database
     database_url: str = Field(alias="DATABASE_URL")
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # WeChat Mini Program
     wechat_appid: str = Field(default="", alias="WECHAT_APPID")
     wechat_secret: str = Field(default="", alias="WECHAT_SECRET")
+    wechat_dev_fallback: bool = Field(default=False, alias="WECHAT_DEV_FALLBACK")
 
     # Tencent COS
     cos_secret_id: str = Field(default="", alias="COS_SECRET_ID")
@@ -56,6 +57,32 @@ class Settings(BaseSettings):
     )
     tryon_fast_model: str = Field(default="aitryon", alias="TRYON_FAST_MODEL")
     tryon_premium_model: str = Field(default="aitryon-plus", alias="TRYON_PREMIUM_MODEL")
+
+    # 阿里云 AI 试衣-图片分割模型，官方模型名：aitryon-parsing-v1
+    tryon_segment_model: str = Field(default="aitryon-parsing-v1", alias="TRYON_SEGMENT_MODEL")
+    tryon_segment_api_key: str = Field(default="", alias="TRYON_SEGMENT_API_KEY")
+    tryon_segment_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/api/v1", alias="TRYON_SEGMENT_BASE_URL"
+    )
+
+    # Feature gating & promotion
+    feature_free_tryon_daily_limit: int = Field(default=0, alias="FEATURE_FREE_TRYON_DAILY_LIMIT")
+    feature_free_puzzle_daily_limit: int = Field(default=0, alias="FEATURE_FREE_PUZZLE_DAILY_LIMIT")
+    promotion_mode: bool = Field(default=False, alias="PROMOTION_MODE")
+
+    # Credits configuration
+    sign_in_reward_base: int = Field(default=5, alias="SIGN_IN_REWARD_BASE")
+    sign_in_reward_max: int = Field(default=20, alias="SIGN_IN_REWARD_MAX")
+    sign_in_reward_expire_days: int = Field(default=30, alias="SIGN_IN_REWARD_EXPIRE_DAYS")
+    credit_purchase_expire_days: int = Field(default=60, alias="CREDIT_PURCHASE_EXPIRE_DAYS")
+
+    # Feature credit costs (when membership quota exceeded or non-member)
+    tryon_credit_cost: int = Field(default=10, alias="TRYON_CREDIT_COST")
+    puzzle_credit_cost: int = Field(default=5, alias="PUZZLE_CREDIT_COST")
+
+    # Referral rewards
+    referral_register_reward_credits: int = Field(default=50, alias="REFERRAL_REGISTER_REWARD_CREDITS")
+    referral_purchase_reward_credits: int = Field(default=100, alias="REFERRAL_PURCHASE_REWARD_CREDITS")
 
 
 settings = Settings()

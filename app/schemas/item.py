@@ -1,12 +1,25 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def to_camel(snake: str) -> str:
     parts = snake.split("_")
     return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+_DISALLOWED_URL_SCHEMES = {"javascript:", "data:", "file:", "vbscript:"}
+
+
+def _validate_safe_url(value: str | None) -> str | None:
+    if not value:
+        return value
+    lowered = value.strip().lower()
+    for scheme in _DISALLOWED_URL_SCHEMES:
+        if lowered.startswith(scheme):
+            raise ValueError("URL 协议不合法")
+    return value
 
 
 class ItemBase(BaseModel):
@@ -16,13 +29,18 @@ class ItemBase(BaseModel):
         from_attributes=True,
     )
 
-    name: str = Field(..., max_length=100)
+    name: str = Field(..., min_length=1, max_length=100)
     category: str = Field(..., max_length=20)
     sub_category: str | None = Field(default=None, max_length=30)
     image_url: str = ""
     thumbnail_url: str | None = None
     image_color: str | None = Field(default=None, max_length=10)
-    price: int | None = None
+    price: int | None = Field(default=None, ge=0, le=9999999)
+
+    @field_validator("image_url", "thumbnail_url")
+    @classmethod
+    def _check_image_url(cls, value: str | None) -> str | None:
+        return _validate_safe_url(value)
     brand: str | None = Field(default=None, max_length=100)
     material: str | None = Field(default=None, max_length=200)
     color: str | None = Field(default=None, max_length=50)

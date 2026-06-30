@@ -99,13 +99,18 @@ async def _latest_care_dates(
     return {row.item_id: row.care_date for row in result.all()}
 
 
+_MAX_CARE_ITEMS = 500
+
+
 async def get_reminders(db: AsyncSession, user_id: UUID) -> dict:
     result = await db.execute(
-        select(Item).where(
+        select(Item)
+        .where(
             Item.user_id == user_id,
             Item.is_deleted.is_(False),
             Item.care_method.is_not(None),
         )
+        .limit(_MAX_CARE_ITEMS)
     )
     items = list(result.scalars().all())
 
@@ -168,11 +173,13 @@ async def _completed_this_month(db: AsyncSession, user_id: UUID) -> int:
 
 async def get_stats(db: AsyncSession, user_id: UUID) -> dict:
     result = await db.execute(
-        select(Item).where(
+        select(Item)
+        .where(
             Item.user_id == user_id,
             Item.is_deleted.is_(False),
             Item.care_method.is_not(None),
         )
+        .limit(_MAX_CARE_ITEMS)
     )
     items = list(result.scalars().all())
     latest_dates = await _latest_care_dates(db, [item.id for item in items])

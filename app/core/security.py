@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from jose import JWTError, jwt
+import jwt
+from jwt import DecodeError, ExpiredSignatureError, InvalidTokenError
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -25,14 +26,19 @@ def create_access_token(user_id: UUID, expires_delta: timedelta | None = None) -
 def decode_access_token(token: str) -> UUID:
     """解析 JWT，返回 user_id"""
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            options={"require": ["exp", "sub"]},
+        )
         if payload.get("type") != "access":
-            raise JWTError("invalid token type")
+            raise InvalidTokenError("invalid token type")
         user_id_str: str | None = payload.get("sub")
         if user_id_str is None:
-            raise JWTError("missing subject")
+            raise InvalidTokenError("missing subject")
         return UUID(user_id_str)
-    except JWTError as exc:
+    except (ExpiredSignatureError, InvalidTokenError, DecodeError, ValueError) as exc:
         raise ValueError("invalid token") from exc
 
 

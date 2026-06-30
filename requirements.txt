@@ -13,7 +13,7 @@ asyncpg>=0.29.0
 alembic>=1.13.0
 
 # Auth
-python-jose[cryptography]>=3.3.0
+pyjwt>=2.8.0
 passlib[bcrypt]>=1.7.4
 
 # HTTP client for WeChat / AI services
@@ -23,6 +23,9 @@ httpx>=0.26.0
 qcloud-python-sts>=3.1.0
 # Tencent COS backend direct upload
 cos-python-sdk-v5>=5.0.0
+
+# Image processing (puzzle composition)
+Pillow>=10.2.0
 
 # Development / testing
 pytest>=8.0.0

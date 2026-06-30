@@ -1,8 +1,6 @@
-import asyncio
 import base64
 import re
-from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,13 +14,11 @@ from app.services.cos import is_cos_configured, upload_bytes_to_cos
 from app.services.wear_history_service import create_history
 
 
-UPLOAD_DIR = Path("uploads/items")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 _BASE64_IMAGE_RE = re.compile(r"^data:image/(\w+);base64,(.*)$")
 
 
 async def _save_base64_image(image_base64: str, base_url: str) -> str:
+    """将 base64 图片直传到 COS，返回公网 URL。"""
     match = _BASE64_IMAGE_RE.match(image_base64)
     if not match:
         return image_base64
@@ -34,13 +30,10 @@ async def _save_base64_image(image_base64: str, base_url: str) -> str:
     except Exception:
         raise BadRequestException("图片 base64 解码失败")
 
-    if is_cos_configured():
-        return await upload_bytes_to_cos(data, f"image/{mime_ext}", ext)
+    if not is_cos_configured():
+        raise BadRequestException("图片存储 COS 未配置，无法保存图片")
 
-    filename = f"{uuid4().hex}.{ext}"
-    dest = UPLOAD_DIR / filename
-    await asyncio.to_thread(dest.write_bytes, data)
-    return f"{base_url.rstrip('/')}/uploads/items/{filename}"
+    return await upload_bytes_to_cos(data, f"image/{mime_ext}", ext)
 
 
 async def create_item(

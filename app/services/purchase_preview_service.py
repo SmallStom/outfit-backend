@@ -19,7 +19,7 @@ _DEFAULT_CANDIDATE = {
 
 
 def _hash_int(seed: str, max_val: int = 100) -> int:
-    digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return int(digest[:8], 16) % max_val
 
 

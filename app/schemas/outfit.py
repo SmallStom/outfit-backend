@@ -40,7 +40,6 @@ class OutfitUpdate(BaseModel):
     cover_color: str | None = Field(default=None, max_length=10)
     occasion: str | None = Field(default=None, max_length=50)
     weather: str | None = Field(default=None, max_length=20)
-    is_ai_generated: bool | None = None
     color_scheme: list[str] | None = None
     item_ids: list[UUID] | None = None
 

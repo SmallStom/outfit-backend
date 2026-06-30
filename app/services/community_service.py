@@ -1,4 +1,5 @@
 import hashlib
+import html
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -21,7 +22,7 @@ def _avatar_color(user: User) -> str:
         "#fa709a", "#30cfd0", "#a8edea", "#ffd1ff", "#5ee7df",
         "#c471f5", "#f6d365", "#84fab0", "#8fd3f4", "#fccb90", "#d4fc79",
     ]
-    idx = int(hashlib.md5(str(user.id).encode()).hexdigest()[:4], 16) % len(palette)
+    idx = int(hashlib.sha256(str(user.id).encode()).hexdigest()[:4], 16) % len(palette)
     return palette[idx]
 
 
@@ -61,7 +62,7 @@ def _post_item(
     return {
         "id": post.id,
         "author": _author(user),
-        "title": post.title,
+        "title": html.escape(post.title or ""),
         "cover_color": post.cover_color,
         "img_height": post.img_height,
         "like_count": post.like_count,
@@ -70,7 +71,7 @@ def _post_item(
         "style": post.style,
         "city": post.city,
         "images": post.images,
-        "content": post.content,
+        "content": html.escape(post.content or ""),
         "comment_count": post.comment_count,
         "tags": post.tags,
         "created_at": post.created_at,
@@ -82,9 +83,9 @@ def _comment_item(comment: Comment) -> dict:
     return {
         "id": comment.id,
         "user_id": comment.user_id,
-        "user": comment.user_name or "匿名用户",
+        "user": html.escape(comment.user_name or "匿名用户"),
         "avatar_color": comment.avatar_color,
-        "content": comment.content,
+        "content": html.escape(comment.content or ""),
         "like_count": comment.like_count,
         "created_at": comment.created_at,
     }
@@ -169,28 +170,28 @@ async def toggle_like(
     if post is None:
         raise NotFoundException("帖子不存在")
 
-    like_result = await db.execute(
-        select(PostLike).where(
-            PostLike.user_id == current_user_id,
-            PostLike.post_id == post_id,
-        )
+    # 先尝试插入，利用唯一索引原子性避免并发冲突
+    insert_result = await db.execute(
+        insert(PostLike)
+        .values(user_id=current_user_id, post_id=post_id)
+        .on_conflict_do_nothing(index_elements=["user_id", "post_id"])
+        .returning(PostLike.id)
     )
-    like = like_result.scalar_one_or_none()
+    inserted_id = insert_result.scalar_one_or_none()
 
-    if like:
-        await db.delete(like)
-        is_liked = False
-    else:
+    if inserted_id is None:
+        # 已存在则取消点赞
         await db.execute(
-            insert(PostLike)
-            .values(user_id=current_user_id, post_id=post_id)
-            .on_conflict_do_nothing(
-                index_elements=["user_id", "post_id"]
+            PostLike.__table__.delete().where(
+                PostLike.user_id == current_user_id,
+                PostLike.post_id == post_id,
             )
         )
+        is_liked = False
+    else:
         is_liked = True
 
-    # 重新计算点赞数，避免并发下的计数漂移
+    # 重新计算点赞数，确保最终一致
     count_result = await db.execute(
         select(func.count(PostLike.id)).where(PostLike.post_id == post_id)
     )

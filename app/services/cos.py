@@ -20,7 +20,7 @@ def is_cos_configured() -> bool:
 async def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
     """后端直传文件到 COS，返回公网可访问 URL。"""
     if not _cos_configured():
-        raise BadRequestException("COS 未配置，请使用 /upload/local 本地上传接口")
+        raise BadRequestException("COS 未配置，无法上传文件")
 
     from qcloud_cos import CosConfig, CosS3Client
 
@@ -47,7 +47,7 @@ async def upload_bytes_to_cos(data: bytes, content_type: str, ext: str) -> str:
 async def get_cos_sts_credentials(user_id: str) -> dict:
     """生成腾讯云 COS 临时上传凭证；未配置密钥时抛出异常。"""
     if not _cos_configured():
-        raise BadRequestException("COS 未配置，请使用 /upload/local 本地上传接口")
+        raise BadRequestException("COS 未配置，无法生成临时上传凭证")
 
     from qcloud_sts.sts import Sts
 

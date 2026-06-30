@@ -13,6 +13,8 @@ from app.schemas.tryon import (
     TryonPresetItem,
     TryonResultOut,
 )
+from app.services.quota_service import get_quota_summary
+from app.services.share_service import share_tryon_result
 from app.services.tryon_service import (
     categories,
     generate_presets,
@@ -24,6 +26,17 @@ from app.services.tryon_service import (
 )
 
 router = APIRouter(prefix="/tryon", tags=["tryon"])
+
+
+@router.get("/quota")
+async def get_tryon_quota(db: DbSession, user_id: CurrentUserId):
+    summary = await get_quota_summary(db=db, user_id=UUID(user_id))
+    return success(data=summary)
+
+
+@router.get("/categories")
+async def get_categories():
+    return success(data=categories())
 
 
 @router.get("/items")
@@ -124,3 +137,14 @@ async def get_tryon_result_detail(
     return success(
         data=TryonResultOut.model_validate(tryon_result).model_dump(by_alias=True)
     )
+
+
+@router.post("/results/{result_id}/share")
+async def share_tryon(
+    result_id: UUID,
+    db: DbSession,
+    user_id: CurrentUserId,
+    title: Annotated[str | None, Query(max_length=200)] = None,
+):
+    post = await share_tryon_result(db=db, user_id=UUID(user_id), tryon_result_id=result_id, title=title)
+    return success(data={"post_id": post.id})
