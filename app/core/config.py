@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     tryon_fast_model: str = Field(default="aitryon", alias="TRYON_FAST_MODEL")
     tryon_premium_model: str = Field(default="aitryon-plus", alias="TRYON_PREMIUM_MODEL")
 
+    # HighwayAPI virtual try-on (default provider, fallback to Aliyun on failure)
+    tryon_provider: str = Field(default="highway", alias="TRYON_PROVIDER")
+    tryon_fallback_to_aliyun: bool = Field(default=True, alias="TRYON_FALLBACK_TO_ALIYUN")
+
+    highway_api_key: str = Field(default="", alias="HIGHWAY_API_KEY")
+    highway_base_url: str = Field(
+        default="https://api.highwayapi.ai/v3", alias="HIGHWAY_BASE_URL"
+    )
+    highway_tryon_model: str = Field(default="gpt-image-2-edit", alias="HIGHWAY_TRYON_MODEL")
+    highway_tryon_size: str = Field(default="1024x1024", alias="HIGHWAY_TRYON_SIZE")
+    highway_tryon_quality: str = Field(default="low", alias="HIGHWAY_TRYON_QUALITY")
+
     # 阿里云 AI 试衣-图片分割模型，官方模型名：aitryon-parsing-v1
     tryon_segment_model: str = Field(default="aitryon-parsing-v1", alias="TRYON_SEGMENT_MODEL")
     tryon_segment_api_key: str = Field(default="", alias="TRYON_SEGMENT_API_KEY")

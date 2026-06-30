@@ -16,6 +16,9 @@ class TryonResult(Base, UUIDMixin, TimestampMixin):
     )
     mode: Mapped[str] = mapped_column(String(20))
     model: Mapped[str] = mapped_column(String(50))
+    provider: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default="highway"
+    )
 
     # 输入图片（必须为公网可访问 URL）
     person_image_url: Mapped[str] = mapped_column(Text)

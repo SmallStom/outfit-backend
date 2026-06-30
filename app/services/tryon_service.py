@@ -231,49 +231,154 @@ def _validate_public_url(url: str | None, name: str) -> None:
         raise BadRequestException(f"{name} 不能指向内网、回环或不可解析的地址")
 
 
-async def generate_tryon(
+# ---------------------------------------------------------------------------
+# HighwayAPI GPT Image 2 Edit virtual try-on
+# ---------------------------------------------------------------------------
+
+
+def _build_highway_image_list(
+    person_image_url: str,
+    top_url: str | None,
+    bottom_url: str | None,
+    outer_url: str | None,
+) -> list[str]:
+    """把人物图和衣物图合并成 HighwayAPI 的 image 数组。"""
+    images = [person_image_url]
+    for garment_url in [top_url, bottom_url, outer_url]:
+        if garment_url:
+            images.append(garment_url)
+    return images
+
+
+def _build_highway_prompt(
+    top_url: str | None,
+    bottom_url: str | None,
+    outer_url: str | None,
+) -> str:
+    """根据选择的衣物类型生成对应的 HighwayAPI 提示词。"""
+    has_top = bool(top_url)
+    has_bottom = bool(bottom_url)
+    has_outer = bool(outer_url)
+
+    base_constraint = (
+        "keep the person's face, pose and background unchanged, "
+        "photorealistic, high quality"
+    )
+
+    if has_top and has_bottom:
+        return (
+            "Put the top garment and bottom garment from the reference images "
+            f"onto the person in the first image, {base_constraint}"
+        )
+    if has_top:
+        return (
+            "Put the top garment from the reference image "
+            f"onto the person in the first image, {base_constraint}"
+        )
+    if has_bottom:
+        return (
+            "Put the bottom garment from the reference image "
+            f"onto the person in the first image, {base_constraint}"
+        )
+    if has_outer:
+        return (
+            "Put the outer garment from the reference image "
+            f"onto the person in the first image, {base_constraint}"
+        )
+    return (
+        "Put the clothes from the reference images onto the person in the first image, "
+        f"{base_constraint}"
+    )
+
+
+async def _submit_highway_tryon(
     db: AsyncSession,
     user_id: UUID,
     mode: str,
     person_image_url: str,
-    top_item_id: UUID | None = None,
-    bottom_item_id: UUID | None = None,
-    outer_item_id: UUID | None = None,
-) -> dict:
-    """提交阿里云 OutfitAnyone 虚拟试衣任务。"""
+    top_url: str | None,
+    bottom_url: str | None,
+    outer_url: str | None,
+) -> TryonResult:
+    """调用 HighwayAPI GPT Image 2 Edit 同步生成试衣图并持久化。"""
+    if not settings.highway_api_key:
+        raise AIException("HighwayAPI 尚未配置 API Key")
+
+    payload: dict = {
+        "n": 1,
+        "image": _build_highway_image_list(
+            person_image_url, top_url, bottom_url, outer_url
+        ),
+        "prompt": _build_highway_prompt(top_url, bottom_url, outer_url),
+        "size": settings.highway_tryon_size,
+        "quality": settings.highway_tryon_quality,
+        "background": "auto",
+        "output_format": "png",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{settings.highway_base_url}/{settings.highway_tryon_model}",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {settings.highway_api_key}",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("HighwayAPI 试衣失败: %s - %s", exc.response.status_code, exc.response.text)
+        raise AIException("HighwayAPI 试衣失败，请稍后重试") from exc
+    except httpx.RequestError as exc:
+        raise AIException("HighwayAPI 网络异常", timeout=True) from exc
+
+    images = data.get("images") or []
+    image_url = images[0] if images else None
+    if not image_url:
+        raise AIException("HighwayAPI 未返回结果图片")
+
+    tryon_result = TryonResult(
+        user_id=user_id,
+        mode=mode,
+        model=settings.highway_tryon_model,
+        provider="highway",
+        person_image_url=person_image_url,
+        top_garment_url=top_url,
+        bottom_garment_url=bottom_url,
+        outer_garment_url=outer_url,
+        task_id="",
+        status="succeeded",
+        result_image_url=image_url,
+    )
+    db.add(tryon_result)
+    await db.commit()
+    await db.refresh(tryon_result)
+    return tryon_result
+
+
+# ---------------------------------------------------------------------------
+# Aliyun DashScope virtual try-on
+# ---------------------------------------------------------------------------
+
+async def _generate_tryon_aliyun(
+    db: AsyncSession,
+    user_id: UUID,
+    mode: str,
+    person_image_url: str,
+    top_url: str | None,
+    bottom_url: str | None,
+) -> TryonResult:
+    """提交阿里云 OutfitAnyone 虚拟试衣任务并持久化记录。"""
     if not settings.tryon_api_key:
         raise AIException("虚拟试衣服务尚未配置 API Key")
-
-    # 额度校验与扣减
-    quota = await deduct_for_tryon(db=db, user_id=user_id)
-    if not quota.get("allowed") or not quota.get("deducted"):
-        raise ForbiddenException("AI 试穿次数已用完，请开通会员或购买积分")
 
     model = (
         settings.tryon_premium_model
         if mode == "premium"
         else settings.tryon_fast_model
     )
-
-    # 校验输入图片 URL
-    _validate_public_url(person_image_url, "人物照片")
-
-    # 查询并校验衣物归属
-    requested_ids = [i for i in [top_item_id, bottom_item_id, outer_item_id] if i]
-    items = await _get_items(db, user_id, requested_ids)
-    found_ids = {item.id for item in items}
-    missing = set(requested_ids) - found_ids
-    if missing:
-        raise NotFoundException("部分衣物不存在或无权访问")
-
-    top_url, bottom_url = _resolve_garment_urls(
-        items, top_item_id, bottom_item_id, outer_item_id
-    )
-    if not top_url and not bottom_url:
-        raise BadRequestException("请至少选择一件上装或下装")
-
-    _validate_public_url(top_url, "上装图片")
-    _validate_public_url(bottom_url, "下装图片")
 
     payload: dict = {
         "model": model,
@@ -319,6 +424,7 @@ async def generate_tryon(
         user_id=user_id,
         mode=mode,
         model=model,
+        provider="aliyun",
         person_image_url=person_image_url,
         top_garment_url=top_url,
         bottom_garment_url=bottom_url,
@@ -329,6 +435,75 @@ async def generate_tryon(
     db.add(tryon_result)
     await db.commit()
     await db.refresh(tryon_result)
+    return tryon_result
+
+
+async def generate_tryon(
+    db: AsyncSession,
+    user_id: UUID,
+    mode: str,
+    person_image_url: str,
+    top_item_id: UUID | None = None,
+    bottom_item_id: UUID | None = None,
+    outer_item_id: UUID | None = None,
+) -> dict:
+    """提交虚拟试衣任务，默认 liblib，失败时回退阿里云。"""
+    # 额度校验与扣减
+    quota = await deduct_for_tryon(db=db, user_id=user_id)
+    if not quota.get("allowed") or not quota.get("deducted"):
+        raise ForbiddenException("AI 试穿次数已用完，请开通会员或购买积分")
+
+    # 校验输入图片 URL
+    _validate_public_url(person_image_url, "人物照片")
+
+    # 查询并校验衣物归属
+    requested_ids = [i for i in [top_item_id, bottom_item_id, outer_item_id] if i]
+    items = await _get_items(db, user_id, requested_ids)
+    found_ids = {item.id for item in items}
+    missing = set(requested_ids) - found_ids
+    if missing:
+        raise NotFoundException("部分衣物不存在或无权访问")
+
+    top_url, bottom_url = _resolve_garment_urls(
+        items, top_item_id, bottom_item_id, outer_item_id
+    )
+    if not top_url and not bottom_url:
+        raise BadRequestException("请至少选择一件上装或下装")
+
+    _validate_public_url(top_url, "上装图片")
+    _validate_public_url(bottom_url, "下装图片")
+
+    use_highway = (
+        settings.tryon_provider == "highway"
+        and bool(settings.highway_api_key)
+    )
+    tryon_result: TryonResult | None = None
+
+    if use_highway:
+        try:
+            tryon_result = await _submit_highway_tryon(
+                db=db,
+                user_id=user_id,
+                mode=mode,
+                person_image_url=person_image_url,
+                top_url=top_url,
+                bottom_url=bottom_url,
+                outer_url=None,
+            )
+        except (AIException, httpx.HTTPStatusError, httpx.RequestError) as exc:
+            logger.warning("HighwayAPI 试衣失败: %s", exc)
+            if not settings.tryon_fallback_to_aliyun:
+                raise
+
+    if tryon_result is None:
+        tryon_result = await _generate_tryon_aliyun(
+            db=db,
+            user_id=user_id,
+            mode=mode,
+            person_image_url=person_image_url,
+            top_url=top_url,
+            bottom_url=bottom_url,
+        )
 
     return {
         "id": tryon_result.id,
@@ -376,13 +551,8 @@ def _extract_tryon_image_url(output: dict) -> str | None:
     return output.get("image_url") or output.get("url")
 
 
-async def refresh_tryon_result(
-    db: AsyncSession, tryon_result: TryonResult
-) -> TryonResult:
+async def _refresh_aliyun_tryon(tryon_result: TryonResult) -> None:
     """轮询阿里云任务状态并更新本地记录。"""
-    if tryon_result.status in ("succeeded", "failed"):
-        return tryon_result
-
     if not settings.tryon_api_key:
         raise AIException("虚拟试衣服务尚未配置 API Key")
 
@@ -415,11 +585,28 @@ async def refresh_tryon_result(
         logger.error("虚拟试衣任务失败: %s", output)
         tryon_result.error_message = "虚拟试衣生成失败"
 
+
+async def refresh_tryon_result(
+    db: AsyncSession, tryon_result: TryonResult
+) -> TryonResult:
+    """刷新任务状态（HighwayAPI 为同步返回，阿里云需轮询）。"""
+    if tryon_result.status in ("succeeded", "failed"):
+        return tryon_result
+
+    # HighwayAPI 是同步接口，提交时已经拿到结果图
+    if tryon_result.provider == "highway":
+        return tryon_result
+
+    await _refresh_aliyun_tryon(tryon_result)
+
     await db.commit()
     await db.refresh(tryon_result)
 
     # 在独立事务中触发首次 AI 试穿任务，避免嵌套提交
-    if status == "succeeded" and tryon_result.result_image_url:
+    if (
+        tryon_result.status == "succeeded"
+        and tryon_result.result_image_url
+    ):
         await complete_task(db=db, user_id=tryon_result.user_id, trigger_event="first_tryon")
 
     return tryon_result

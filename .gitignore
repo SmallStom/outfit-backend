@@ -46,3 +46,5 @@ uploads/*
 
 # Alembic local overrides
 alembic.ini.local
+
+uploads/
