@@ -83,6 +83,33 @@ def upgrade() -> None:
     )
     op.create_index("ix_credit_accounts_user_id", "credit_accounts", ["user_id"], unique=True)
 
+    # orders 需要先创建，因为 credit_transactions / promo_code_usages 依赖它
+    op.create_table(
+        "orders",
+        sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("order_type", sa.String(length=30), nullable=False),
+        sa.Column("target_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("target_count", sa.Integer(), server_default=sa.text("1"), nullable=False),
+        sa.Column("amount", sa.Integer(), nullable=False),
+        sa.Column("original_amount", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=20), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("payment_method", sa.String(length=30), nullable=True),
+        sa.Column("out_trade_no", sa.String(length=64), nullable=True),
+        sa.Column("paid_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("expired_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("extra_metadata", postgresql.JSONB(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("out_trade_no"),
+    )
+    op.create_index("ix_orders_user_id", "orders", ["user_id"], unique=False)
+    op.create_index("ix_orders_target_id", "orders", ["target_id"], unique=False)
+    op.create_index("ix_orders_out_trade_no", "orders", ["out_trade_no"], unique=True)
+
     # credit_transactions
     op.create_table(
         "credit_transactions",
@@ -172,33 +199,6 @@ def upgrade() -> None:
     )
     op.create_index("ix_sign_in_records_user_id", "sign_in_records", ["user_id"], unique=False)
     op.create_index("ix_sign_in_records_sign_date", "sign_in_records", ["sign_date"], unique=False)
-
-    # orders
-    op.create_table(
-        "orders",
-        sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("order_type", sa.String(length=30), nullable=False),
-        sa.Column("target_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("target_count", sa.Integer(), server_default=sa.text("1"), nullable=False),
-        sa.Column("amount", sa.Integer(), nullable=False),
-        sa.Column("original_amount", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=20), server_default=sa.text("'pending'"), nullable=False),
-        sa.Column("payment_method", sa.String(length=30), nullable=True),
-        sa.Column("out_trade_no", sa.String(length=64), nullable=True),
-        sa.Column("paid_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("expired_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("extra_metadata", postgresql.JSONB(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("out_trade_no"),
-    )
-    op.create_index("ix_orders_user_id", "orders", ["user_id"], unique=False)
-    op.create_index("ix_orders_target_id", "orders", ["target_id"], unique=False)
-    op.create_index("ix_orders_out_trade_no", "orders", ["out_trade_no"], unique=True)
 
     # promo_codes
     op.create_table(
