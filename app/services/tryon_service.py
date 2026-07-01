@@ -14,6 +14,7 @@ from app.core.exceptions import AIException, BadRequestException, ForbiddenExcep
 from app.models.item import Item
 from app.models.tryon_preset import TryonPreset
 from app.models.tryon_result import TryonResult
+from app.services.cos import upload_image_url_to_cos
 from app.services.quota_service import deduct_for_tryon
 from app.services.task_service import complete_task
 
@@ -80,16 +81,6 @@ def categories() -> list[dict]:
     return _CATEGORIES
 
 
-def _pick_item(
-    pool: list[Item], category: str, used_ids: set[UUID]
-) -> Item | None:
-    for item in pool:
-        if item.category == category and item.id not in used_ids:
-            used_ids.add(item.id)
-            return item
-    return None
-
-
 async def items_by_category(
     db: AsyncSession, user_id: UUID, category: str
 ) -> list[Item]:
@@ -145,6 +136,16 @@ async def generate_presets(
             }
         )
     return presets
+
+
+def _pick_item(
+    pool: list[Item], category: str, used_ids: set[UUID]
+) -> Item | None:
+    for item in pool:
+        if item.category == category and item.id not in used_ids:
+            used_ids.add(item.id)
+            return item
+    return None
 
 
 async def list_presets(
@@ -339,6 +340,9 @@ async def _submit_highway_tryon(
     if not image_url:
         raise AIException("HighwayAPI 未返回结果图片")
 
+    # 上传到我们自己的 COS，避免第三方 URL 过期
+    cos_url = await upload_image_url_to_cos(image_url, folder="tryon")
+
     tryon_result = TryonResult(
         user_id=user_id,
         mode=mode,
@@ -350,7 +354,7 @@ async def _submit_highway_tryon(
         outer_garment_url=outer_url,
         task_id="",
         status="succeeded",
-        result_image_url=image_url,
+        result_image_url=cos_url,
     )
     db.add(tryon_result)
     await db.commit()
@@ -361,6 +365,7 @@ async def _submit_highway_tryon(
 # ---------------------------------------------------------------------------
 # Aliyun DashScope virtual try-on
 # ---------------------------------------------------------------------------
+
 
 async def _generate_tryon_aliyun(
     db: AsyncSession,
@@ -447,7 +452,7 @@ async def generate_tryon(
     bottom_item_id: UUID | None = None,
     outer_item_id: UUID | None = None,
 ) -> dict:
-    """提交虚拟试衣任务，默认 liblib，失败时回退阿里云。"""
+    """提交虚拟试衣任务，默认使用 HighwayAPI，失败时回退阿里云。"""
     # 额度校验与扣减
     quota = await deduct_for_tryon(db=db, user_id=user_id)
     if not quota.get("allowed") or not quota.get("deducted"):
@@ -576,6 +581,9 @@ async def _refresh_aliyun_tryon(tryon_result: TryonResult) -> None:
 
     if status == "succeeded":
         image_url = _extract_tryon_image_url(output)
+        if image_url:
+            # 上传到我们自己的 COS，避免第三方 URL 过期
+            image_url = await upload_image_url_to_cos(image_url, folder="tryon")
         tryon_result.result_image_url = image_url
         if not image_url:
             tryon_result.status = "failed"
