@@ -1,9 +1,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
+from app.core.exceptions import NotFoundException
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
+from app.models.user import User
+from app.schemas.auth import UserProfile
+from app.schemas.common import to_camel
 from app.schemas.user import (
     UserListItem,
     UserStats,
@@ -16,6 +22,44 @@ from app.services.user_service import (
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+class CompleteOnboardingRequest(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    skipped: bool = Field(default=False, description="用户是否跳过了引导步骤")
+
+
+class CompleteOnboardingResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    user: dict
+    skipped: bool
+
+
+@router.post("/me/complete-onboarding")
+async def complete_onboarding(
+    body: CompleteOnboardingRequest,
+    db: DbSession,
+    user_id: CurrentUserId,
+):
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise NotFoundException("用户不存在")
+    user.is_new_user = False
+    await db.commit()
+    await db.refresh(user)
+    return success(data={
+        "user": UserProfile.model_validate(user).model_dump(by_alias=True),
+        "skipped": body.skipped,
+    })
 
 
 @router.get("/me/stats")

@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 # 加载后端 .env
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
@@ -46,17 +46,45 @@ def parse_datetime(value: str | None) -> datetime | None:
     return datetime.strptime(value, "%Y-%m-%d")
 
 
+TARGET_USER_ID = UUID("303ccb5d-083f-431c-9467-104ae7727764")
+TARGET_OPENID = "dev-user"
+
+
 async def ensure_user(db: AsyncSession) -> User:
-    """创建或获取一个 mock 用户，所有衣物都挂在这个用户下。"""
+    """创建或获取前端调试用户，所有衣物都挂在这个用户下。"""
+    # 清理旧的 mock_user_001，避免手机号唯一约束冲突
     result = await db.execute(select(User).where(User.openid == "mock_user_001"))
+    old_mock = result.scalar_one_or_none()
+    if old_mock:
+        # 先删除该用户下的衣物和预设，再删除用户
+        await db.execute(
+            text("DELETE FROM items WHERE user_id = :uid"),
+            {"uid": old_mock.id},
+        )
+        await db.execute(
+            text("DELETE FROM tryon_presets WHERE user_id = :uid"),
+            {"uid": old_mock.id},
+        )
+        await db.delete(old_mock)
+        await db.flush()
+        print(f"deleted old mock user and related data: {old_mock.id}")
+
+    result = await db.execute(select(User).where(User.openid == TARGET_OPENID))
     user = result.scalar_one_or_none()
     if user:
-        print(f"use existing mock user: {user.id}")
+        # 更新调试用户的 mock 信息
+        user.nickname = "Mock User"
+        user.phone = "13800138000"
+        user.avatar_url = "https://picsum.photos/seed/mock-user/200/200"
+        user.avatar_color = "#e8d5c4"
+        user.bio = "前端 mock 数据初始化用户"
+        user.gender = "unknown"
+        print(f"use existing dev user: {user.id}")
         return user
 
     user = User(
-        id=uuid4(),
-        openid="mock_user_001",
+        id=TARGET_USER_ID,
+        openid=TARGET_OPENID,
         phone="13800138000",
         nickname="Mock User",
         avatar_url="https://picsum.photos/seed/mock-user/200/200",
@@ -66,7 +94,7 @@ async def ensure_user(db: AsyncSession) -> User:
     )
     db.add(user)
     await db.flush()
-    print(f"created mock user: {user.id}")
+    print(f"created dev user: {user.id}")
     return user
 
 
@@ -83,7 +111,7 @@ async def init_items(db: AsyncSession, user_id: UUID) -> dict[str, UUID]:
     for existing in result.scalars().all():
         await db.delete(existing)
     await db.flush()
-    print("cleared existing mock items")
+    print("cleared existing dev user items")
 
     for mock_item in mock_items:
         db_item = Item(
@@ -134,7 +162,7 @@ async def init_tryon_presets(
     for existing in result.scalars().all():
         await db.delete(existing)
     await db.flush()
-    print("cleared existing mock tryon presets")
+    print("cleared existing dev user tryon presets")
 
     for mock_preset in mock_presets:
         item_ids = [

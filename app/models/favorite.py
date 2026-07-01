@@ -38,3 +38,21 @@ class FavoriteItem(Base, UUIDMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "item_id", name="uq_favorite_items_user_item"),
     )
+
+
+class FavoriteTryonResult(Base, UUIDMixin):
+    __tablename__ = "favorite_tryon_results"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    tryon_result_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tryon_results.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=now_bj)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "tryon_result_id", name="uq_favorite_tryon_results_user_result"
+        ),
+    )

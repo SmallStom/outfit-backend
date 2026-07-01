@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
-from app.models.favorite import FavoriteItem, FavoritePost
+from app.models.favorite import FavoriteItem, FavoritePost, FavoriteTryonResult
 from app.models.item import Item
 from app.models.post import Post
+from app.models.tryon_result import TryonResult
 
 
 async def list_favorites(db: AsyncSession, user_id: UUID) -> dict:
@@ -57,7 +58,51 @@ async def list_favorites(db: AsyncSession, user_id: UUID) -> dict:
             }
         )
 
-    return {"posts": posts, "items": items}
+    tryon_result = await db.execute(
+        select(FavoriteTryonResult, TryonResult)
+        .join(TryonResult, FavoriteTryonResult.tryon_result_id == TryonResult.id)
+        .where(
+            FavoriteTryonResult.user_id == user_id,
+        )
+        .order_by(FavoriteTryonResult.created_at.desc())
+    )
+    tryon_results = []
+    for fav, result in tryon_result.all():
+        tryon_results.append(
+            {
+                "id": result.id,
+                "result_image_url": result.result_image_url or "",
+                "person_image_url": result.person_image_url,
+                "top_garment_url": result.top_garment_url,
+                "bottom_garment_url": result.bottom_garment_url,
+                "outer_garment_url": result.outer_garment_url,
+                "mode": result.mode,
+                "favorited_at": fav.created_at,
+            }
+        )
+
+    return {"posts": posts, "items": items, "tryon_results": tryon_results}
+
+
+async def is_tryon_result_favorited(
+    db: AsyncSession, user_id: UUID, tryon_result_id: UUID
+) -> bool:
+    result = await db.execute(
+        select(TryonResult).where(
+            TryonResult.id == tryon_result_id,
+            TryonResult.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise NotFoundException("试衣结果不存在")
+
+    fav_result = await db.execute(
+        select(FavoriteTryonResult).where(
+            FavoriteTryonResult.user_id == user_id,
+            FavoriteTryonResult.tryon_result_id == tryon_result_id,
+        )
+    )
+    return fav_result.scalar_one_or_none() is not None
 
 
 async def toggle_favorite_post(
@@ -120,3 +165,39 @@ async def toggle_favorite_item(
             )
         )
     await db.commit()
+
+
+async def toggle_favorite_tryon_result(
+    db: AsyncSession, user_id: UUID, tryon_result_id: UUID
+) -> bool:
+    result = await db.execute(
+        select(TryonResult).where(
+            TryonResult.id == tryon_result_id,
+            TryonResult.user_id == user_id,
+        )
+    )
+    tryon_result = result.scalar_one_or_none()
+    if tryon_result is None:
+        raise NotFoundException("试衣结果不存在")
+
+    fav_result = await db.execute(
+        select(FavoriteTryonResult).where(
+            FavoriteTryonResult.user_id == user_id,
+            FavoriteTryonResult.tryon_result_id == tryon_result_id,
+        )
+    )
+    fav = fav_result.scalar_one_or_none()
+    if fav:
+        await db.delete(fav)
+        await db.commit()
+        return False
+    else:
+        await db.execute(
+            insert(FavoriteTryonResult)
+            .values(user_id=user_id, tryon_result_id=tryon_result_id)
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "tryon_result_id"]
+            )
+        )
+        await db.commit()
+        return True

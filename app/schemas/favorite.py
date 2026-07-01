@@ -39,6 +39,22 @@ class FavoriteItemOut(BaseModel):
     image_url: str = ""
 
 
+class FavoriteTryonResultOut(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: UUID
+    result_image_url: str = ""
+    person_image_url: str = ""
+    top_garment_url: str | None = None
+    bottom_garment_url: str | None = None
+    outer_garment_url: str | None = None
+    mode: str = "fast"
+    favorited_at: datetime
+
+
 class FavoritesResponse(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -47,3 +63,4 @@ class FavoritesResponse(BaseModel):
 
     posts: list[FavoritePostOut] = Field(default_factory=list)
     items: list[FavoriteItemOut] = Field(default_factory=list)
+    tryon_results: list[FavoriteTryonResultOut] = Field(default_factory=list)

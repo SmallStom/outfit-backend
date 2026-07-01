@@ -53,6 +53,7 @@ class UserProfile(BaseModel):
     avatar_color: str | None = None
     bio: str | None = None
     gender: str | None = None
+    is_new_user: bool = True
     referral_code: str | None = None
     invited_by: UUID | None = None
     created_at: datetime
