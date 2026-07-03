@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,9 @@ class Outfit(Base, UUIDMixin, TimestampMixin):
     color_scheme: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(10)), nullable=True
     )
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     items: Mapped[list["OutfitItem"]] = relationship(
         "OutfitItem",

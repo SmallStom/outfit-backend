@@ -62,7 +62,9 @@ async def list_items(
     user_id: UUID,
     category: str | None = None,
     tag: str | None = None,
+    tags: list[str] | None = None,
     search: str | None = None,
+    sort: str | None = None,
 ) -> list[Item]:
     stmt = (
         select(Item)
@@ -73,6 +75,8 @@ async def list_items(
         stmt = stmt.where(Item.category == category)
     if tag:
         stmt = stmt.where(Item.tags.contains([tag]))
+    if tags:
+        stmt = stmt.where(Item.tags.overlap(tags))
     if search:
         q = f"%{search}%"
         stmt = stmt.where(
@@ -83,7 +87,36 @@ async def list_items(
             )
         )
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+
+    if sort and sort != "created_at":
+        items = _sort_items(items, sort)
+
+    return items
+
+
+def _sort_items(items: list[Item], sort: str) -> list[Item]:
+    today = now_bj().date()
+
+    def _idle_days(item: Item) -> int:
+        if item.last_worn_at:
+            last = item.last_worn_at.date() if hasattr(item.last_worn_at, "date") else item.last_worn_at
+            return (today - last).days
+        if item.purchase_date:
+            return (today - item.purchase_date).days
+        return 0
+
+    if sort == "idle_days":
+        items.sort(key=_idle_days, reverse=True)
+    elif sort == "price_desc":
+        items.sort(key=lambda i: i.price or 0, reverse=True)
+    elif sort == "price_asc":
+        items.sort(key=lambda i: i.price or 0)
+    elif sort == "wear_count_desc":
+        items.sort(key=lambda i: i.wear_count or 0, reverse=True)
+    elif sort == "wear_count_asc":
+        items.sort(key=lambda i: i.wear_count or 0)
+    return items
 
 
 async def get_item(db: AsyncSession, user_id: UUID, item_id: UUID) -> Item:

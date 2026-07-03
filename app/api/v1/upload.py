@@ -5,7 +5,14 @@ from fastapi import APIRouter, File, UploadFile
 from app.core.exceptions import BadRequestException
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId
-from app.services.cos import get_cos_sts_credentials, upload_bytes_to_cos
+from app.schemas.upload import (
+    EcommerceImagesResponse,
+    EcommerceUrlRequest,
+    RemoteImageRequest,
+    RemoteImageResponse,
+)
+from app.services.cos import get_cos_sts_credentials, upload_bytes_to_cos, upload_image_url_to_cos
+from app.services.ecommerce_image_service import fetch_ecommerce_images
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -84,3 +91,27 @@ async def upload_tryon_person(
     mime_ext = "jpeg" if suffix == ".jpg" else suffix.lstrip(".")
     url = await upload_bytes_to_cos(content, f"image/{mime_ext}", mime_ext)
     return success(data={"url": url})
+
+
+@router.post("/fetch-ecommerce-images")
+async def upload_fetch_ecommerce_images(
+    body: EcommerceUrlRequest,
+    user_id: CurrentUserId = None,
+):
+    """根据电商商品链接抓取主图/详情图候选列表。"""
+    result = await fetch_ecommerce_images(body.url)
+    return success(data=EcommerceImagesResponse.model_validate(result).model_dump(by_alias=True))
+
+
+@router.post("/download-remote-image")
+async def upload_download_remote_image(
+    body: RemoteImageRequest,
+    user_id: CurrentUserId = None,
+):
+    """将用户选中的远程图片下载并转存 COS，返回 COS 公网 URL。"""
+    cos_url = await upload_image_url_to_cos(
+        body.url,
+        folder="items",
+        fallback_to_original=False,
+    )
+    return success(data=RemoteImageResponse(url=cos_url).model_dump(by_alias=True))

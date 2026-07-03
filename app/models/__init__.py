@@ -5,10 +5,12 @@ from app.models.credit import CreditAccount, CreditPackage, CreditTransaction
 from app.models.favorite import FavoriteItem, FavoritePost
 from app.models.follow import UserFollow
 from app.models.item import Item
+from app.models.item_embedding import ItemEmbedding
 from app.models.membership import MembershipTier, UserMembership
 from app.models.model_template import ModelTemplate
 from app.models.order import Order
 from app.models.outfit import Outfit, OutfitCollection, OutfitCollectionItem, OutfitItem
+from app.models.outfit_feedback import OutfitFeedback
 from app.models.post import Comment, Post, PostLike
 from app.models.promo_code import PromoCode, PromoCodeUsage
 from app.models.puzzle_result import PuzzleResult
@@ -27,10 +29,12 @@ __all__ = [
     "UserSettings",
     "UserFollow",
     "Item",
+    "ItemEmbedding",
     "Outfit",
     "OutfitItem",
     "OutfitCollection",
     "OutfitCollectionItem",
+    "OutfitFeedback",
     "BodyProfile",
     "WearHistory",
     "CareRecord",

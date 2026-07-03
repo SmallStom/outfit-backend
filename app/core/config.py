@@ -41,13 +41,9 @@ class Settings(BaseSettings):
     ai_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1", alias="AI_BASE_URL"
     )
-    ai_model: str = Field(default="qwen-vl-max", alias="AI_MODEL")
-
-    # Aliyun virtual try-on (DashScope/Bailian OutfitAnyone)
-    aliyun_access_key_id: str = Field(default="", alias="ALIYUN_ACCESS_KEY_ID")
-    aliyun_access_key_secret: str = Field(default="", alias="ALIYUN_ACCESS_KEY_SECRET")
-    aliyun_tryon_endpoint: str = Field(
-        default="https://facebody.cn-shanghai.aliyuncs.com", alias="ALIYUN_TRYON_ENDPOINT"
+    # DashScope native API (multimodal embedding / other non-OpenAI-compatible services)
+    ai_dashscope_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/api/v1", alias="AI_DASHSCOPE_BASE_URL"
     )
 
     # DashScope/Bailian virtual try-on
@@ -92,9 +88,29 @@ class Settings(BaseSettings):
     tryon_credit_cost: int = Field(default=10, alias="TRYON_CREDIT_COST")
     puzzle_credit_cost: int = Field(default=5, alias="PUZZLE_CREDIT_COST")
 
-    # Referral rewards
-    referral_register_reward_credits: int = Field(default=50, alias="REFERRAL_REGISTER_REWARD_CREDITS")
-    referral_purchase_reward_credits: int = Field(default=100, alias="REFERRAL_PURCHASE_REWARD_CREDITS")
+    # Recommendation models
+    ai_attribute_model: str = Field(default="qwen3.7-plus", alias="AI_ATTRIBUTE_MODEL")
+    ai_embedding_model: str = Field(
+        default="tongyi-embedding-vision-flash-2026-03-06", alias="AI_EMBEDDING_MODEL"
+    )
+    ai_rerank_model: str = Field(default="qwen3.7-plus", alias="AI_RERANK_MODEL")
+    ai_embedding_dim: int = Field(default=1024, alias="AI_EMBEDDING_DIM")
+
+    # Recommendation scoring weights
+    reco_weight_style: float = Field(default=0.35, alias="RECO_WEIGHT_STYLE")
+    reco_weight_color: float = Field(default=0.25, alias="RECO_WEIGHT_COLOR")
+    reco_weight_occasion: float = Field(default=0.20, alias="RECO_WEIGHT_OCCASION")
+    reco_weight_weather: float = Field(default=0.15, alias="RECO_WEIGHT_WEATHER")
+    reco_weight_bias: float = Field(default=0.05, alias="RECO_WEIGHT_BIAS")
+    reco_top_k: int = Field(default=3, alias="RECO_TOP_K")
+    reco_candidate_k: int = Field(default=10, alias="RECO_CANDIDATE_K")
+    reco_cache_ttl_minutes: int = Field(default=120, alias="RECO_CACHE_TTL_MINUTES")
+    reco_min_interval_seconds: int = Field(default=30, alias="RECO_MIN_INTERVAL_SECONDS")
+
+    # QWeather
+    qweather_api_key: str = Field(default="", alias="QWEATHER_API_KEY")
+    qweather_host: str = Field(default="https://devapi.qweather.com", alias="QWEATHER_HOST")
+    qweather_cache_minutes: int = Field(default=30, alias="QWEATHER_CACHE_MINUTES")
 
 
 settings = Settings()

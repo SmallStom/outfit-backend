@@ -47,6 +47,9 @@ class OutfitUpdate(BaseModel):
 class OutfitOut(OutfitBase):
     id: UUID
     items: list[OutfitItemEntry] = Field(default_factory=list)
+    reason: str | None = None
+    score: float | None = None
+    temperature: float | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -54,6 +57,23 @@ class OutfitOut(OutfitBase):
 class OutfitListResponse(CamelBaseModel):
     list: list[OutfitOut]
     total: int
+
+
+class WeatherInfo(CamelBaseModel):
+    temperature: float = 22.0
+    text: str = "晴"
+    humidity: int = 50
+    city: str = "未知"
+
+
+class DailyRecommendResponse(CamelBaseModel):
+    list: list[OutfitOut]
+    weather: WeatherInfo
+
+
+class FeedbackCreate(CamelBaseModel):
+    action: str = Field(..., pattern="^(like|dislike)$")
+    item_id: UUID | None = None
 
 
 class OutfitCollectionBase(CamelBaseModel):

@@ -318,7 +318,7 @@ async def _submit_highway_tryon(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{settings.highway_base_url}/{settings.highway_tryon_model}",
                 headers={

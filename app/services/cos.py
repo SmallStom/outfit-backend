@@ -1,6 +1,9 @@
 import asyncio
+import ipaddress
 import logging
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -11,13 +14,9 @@ from app.core.timezone import now_bj
 
 logger = logging.getLogger(__name__)
 
-_CONTENT_TYPE_MAP = {
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-    "image/gif": "gif",
-}
+_REMOTE_IMAGE_MAX_SIZE = 10 * 1024 * 1024
+_REMOTE_IMAGE_TIMEOUT = 30.0
+_MAX_REDIRECTS = 3
 
 
 def _cos_configured() -> bool:
@@ -60,38 +59,123 @@ async def upload_bytes_to_cos(
     return f"https://{settings.cos_bucket}.cos.{settings.cos_region}.myqcloud.com/{key}"
 
 
-async def upload_image_url_to_cos(image_url: str, folder: str = "tryon") -> str:
-    """下载远程图片并上传到 COS，返回 COS 公网 URL。
+def _detect_image_format(content: bytes) -> str | None:
+    if len(content) < 12:
+        return None
+    if content[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if content[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "webp"
+    return None
 
-    下载失败或 COS 未配置时，返回原始 URL 作为兜底。
-    """
-    if not image_url or not _cos_configured():
-        return image_url
 
-    ext = "png"
-    content_type = "image/png"
+def _is_forbidden_ip(address: str) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            resp = await client.get(image_url)
-            resp.raise_for_status()
-            data = resp.content
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return True
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
 
-            # 优先从响应头判断格式
-            resp_content_type = resp.headers.get("content-type", "").lower()
-            if resp_content_type in _CONTENT_TYPE_MAP:
-                content_type = resp_content_type
-                ext = _CONTENT_TYPE_MAP[resp_content_type]
-            else:
-                # 从 URL 路径推断扩展名
-                suffix = Path(resp.url.path or image_url).suffix.lower().lstrip(".")
-                if suffix in {"jpg", "jpeg", "png", "webp", "gif"}:
-                    ext = "jpg" if suffix == "jpeg" else suffix
-                    content_type = f"image/{ext}"
 
-            return await upload_bytes_to_cos(data, content_type, ext, folder=folder)
-    except Exception as exc:
-        logger.warning("上传试衣结果图到 COS 失败，将使用原 URL: %s", exc)
+async def _validate_public_http_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise BadRequestException("仅支持 http/https 图片链接")
+    hostname = parsed.hostname
+    if not hostname:
+        raise BadRequestException("图片链接格式不正确")
+    if hostname.lower() == "localhost":
+        raise BadRequestException("该图片链接不受支持")
+    try:
+        if _is_forbidden_ip(hostname):
+            raise BadRequestException("该图片链接不受支持")
+    except ValueError:
+        pass
+
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
+    except socket.gaierror:
+        raise BadRequestException("图片链接域名无法解析")
+    for info in infos:
+        if _is_forbidden_ip(info[4][0]):
+            raise BadRequestException("该图片链接不受支持")
+
+
+async def _download_remote_image(image_url: str) -> tuple[bytes, str, str]:
+    current_url = image_url
+    async with httpx.AsyncClient(timeout=_REMOTE_IMAGE_TIMEOUT, follow_redirects=False) as client:
+        for redirect_count in range(_MAX_REDIRECTS + 1):
+            await _validate_public_http_url(current_url)
+            async with client.stream("GET", current_url) as resp:
+                if resp.status_code in {301, 302, 303, 307, 308}:
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise BadRequestException("图片跳转地址无效")
+                    if redirect_count >= _MAX_REDIRECTS:
+                        raise BadRequestException("图片跳转次数过多")
+                    current_url = str(resp.url.join(location))
+                    continue
+
+                resp.raise_for_status()
+                content_type_header = resp.headers.get("content-type", "").split(";", 1)[0].lower()
+                if content_type_header and not content_type_header.startswith("image/"):
+                    raise BadRequestException("链接内容不是图片")
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > _REMOTE_IMAGE_MAX_SIZE:
+                        raise BadRequestException("图片大小超过 10MB 限制")
+                    chunks.append(chunk)
+
+                data = b"".join(chunks)
+                ext = _detect_image_format(data)
+                if ext is None:
+                    raise BadRequestException("无法识别的图片格式或文件已损坏")
+                content_type = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+                return data, content_type, ext
+
+    raise BadRequestException("图片下载失败")
+
+
+async def upload_image_url_to_cos(
+    image_url: str,
+    folder: str = "tryon",
+    fallback_to_original: bool = True,
+) -> str:
+    """下载远程图片并上传到 COS，返回 COS 公网 URL。"""
+    if not image_url:
         return image_url
+    if not _cos_configured():
+        if fallback_to_original:
+            return image_url
+        raise BadRequestException("COS 未配置，无法上传文件")
+
+    try:
+        data, content_type, ext = await _download_remote_image(image_url)
+        return await upload_bytes_to_cos(data, content_type, ext, folder=folder)
+    except BadRequestException:
+        if fallback_to_original:
+            logger.warning("上传远程图片到 COS 失败，将使用原 URL")
+            return image_url
+        raise
+    except Exception as exc:
+        logger.warning("上传远程图片到 COS 失败，将使用原 URL: %s", exc)
+        if fallback_to_original:
+            return image_url
+        raise BadRequestException("图片下载失败，请重试或换一张")
 
 
 async def get_cos_sts_credentials(user_id: str) -> dict:

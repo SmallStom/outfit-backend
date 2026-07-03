@@ -1,12 +1,14 @@
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.timezone import now_bj
 from app.models.item import Item
 from app.models.outfit import Outfit, OutfitCollection, OutfitCollectionItem, OutfitItem
+from app.models.outfit_feedback import OutfitFeedback
 from app.schemas.outfit import (
     OutfitCollectionCreate,
     OutfitCollectionUpdate,
@@ -14,6 +16,9 @@ from app.schemas.outfit import (
     OutfitItemEntry,
     OutfitUpdate,
 )
+from app.services.ai.weather_service import WeatherResult
+from app.services.reco import engine as reco_engine
+from app.services.reco.engine import InsufficientCandidatesError
 
 
 def _item_entry(item: Item) -> OutfitItemEntry:
@@ -124,7 +129,7 @@ async def delete_outfit(db: AsyncSession, user_id: UUID, outfit_id: UUID) -> Non
 
 
 async def recommend_outfit(db: AsyncSession, user_id: UUID) -> Outfit:
-    """规则版 AI 推荐：从用户衣橱中按分类各选一件组成搭配。"""
+    """规则版 AI 推荐（legacy）：从用户衣橱中按分类各选一件组成搭配。保留作为兜底。"""
     categories = ["top", "bottom", "shoes", "outer", "acc"]
     selected_item_ids: list[UUID] = []
     for category in categories:
@@ -164,6 +169,72 @@ async def recommend_outfit(db: AsyncSession, user_id: UUID) -> Outfit:
     await db.commit()
     await db.refresh(outfit)
     return outfit
+
+
+async def recommend_daily(
+    db: AsyncSession,
+    user_id: UUID,
+    weather: WeatherResult,
+    force_refresh: bool = False,
+) -> list[Outfit]:
+    """新推荐流水线：多模态属性 + 向量 + 加权打分 + LLM 精排，返回 Top-K 套。"""
+    try:
+        outfits = await reco_engine.recommend_daily(
+            db=db, user_id=user_id, weather=weather, force_refresh=force_refresh
+        )
+    except InsufficientCandidatesError as exc:
+        # 候选池不足时直接给出明确业务提示，不再 fallback 强行推荐
+        raise BadRequestException(exc.message) from exc
+
+    if outfits:
+        return outfits
+    # Fallback：其他情况（如打分后无有效组合）退回 legacy 单套
+    try:
+        legacy = await recommend_outfit(db=db, user_id=user_id)
+        return [legacy]
+    except BadRequestException:
+        return []
+
+
+async def record_feedback(
+    db: AsyncSession,
+    user_id: UUID,
+    outfit_id: UUID,
+    action: str,
+    item_id: UUID | None = None,
+) -> None:
+    """记录用户对某套推荐的反馈，用于后续 User_Bias 计算。"""
+    if action not in ("like", "dislike"):
+        raise BadRequestException("反馈类型仅支持 like / dislike")
+
+    # 校验 outfit 归属
+    outfit = await get_outfit(db, user_id, outfit_id)
+
+    if item_id is not None:
+        result = await db.execute(
+            select(Item).where(
+                Item.id == item_id,
+                Item.user_id == user_id,
+                Item.is_deleted.is_(False),
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise NotFoundException("反馈的单品不存在")
+
+    stmt = (
+        pg_insert(OutfitFeedback)
+        .values(
+            user_id=user_id,
+            outfit_id=outfit.id,
+            item_id=item_id,
+            action=action,
+        )
+        .on_conflict_do_nothing(
+            constraint="uq_outfit_feedbacks_user_outfit_item_action",
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
 
 
 # ---------------------------- 搭配集 ----------------------------

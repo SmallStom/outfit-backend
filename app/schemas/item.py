@@ -29,7 +29,7 @@ class ItemBase(BaseModel):
         from_attributes=True,
     )
 
-    name: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=20)
     category: str = Field(..., max_length=20)
     sub_category: str | None = Field(default=None, max_length=30)
     image_url: str = ""
@@ -43,7 +43,7 @@ class ItemBase(BaseModel):
         return _validate_safe_url(value)
     brand: str | None = Field(default=None, max_length=100)
     material: str | None = Field(default=None, max_length=200)
-    color: str | None = Field(default=None, max_length=50)
+    color: str | None = Field(default=None, max_length=20)
     color_hex: str | None = Field(default=None, max_length=10)
     season: str | None = Field(default=None, max_length=50)
     care_method: str | None = Field(default=None, max_length=20)
@@ -63,7 +63,7 @@ class ItemUpdate(BaseModel):
         populate_by_name=True,
     )
 
-    name: str | None = Field(default=None, max_length=100)
+    name: str | None = Field(default=None, max_length=20)
     category: str | None = Field(default=None, max_length=20)
     sub_category: str | None = Field(default=None, max_length=30)
     image_url: str | None = None
@@ -72,7 +72,7 @@ class ItemUpdate(BaseModel):
     price: int | None = None
     brand: str | None = Field(default=None, max_length=100)
     material: str | None = Field(default=None, max_length=200)
-    color: str | None = Field(default=None, max_length=50)
+    color: str | None = Field(default=None, max_length=20)
     color_hex: str | None = Field(default=None, max_length=10)
     season: str | None = Field(default=None, max_length=50)
     care_method: str | None = Field(default=None, max_length=20)

@@ -1,8 +1,8 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Boolean, Date, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -41,5 +41,28 @@ class Item(Base, UUIDMixin, TimestampMixin):
         ARRAY(String(50)), nullable=True, default=list
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # ---------- 推荐系统结构化属性 ----------
+    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    formality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    femininity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    athletic: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vintage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    thickness: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    suitable_temp_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    suitable_temp_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    occasion_tags: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(50)), nullable=True
+    )
+    color_hex_list: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(10)), nullable=True
+    )
+    keywords: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(50)), nullable=True
+    )
+    feature_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending"
+    )
+    feature_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     owner: Mapped["User"] = relationship("User", back_populates="items")

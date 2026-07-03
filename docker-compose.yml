@@ -3,7 +3,7 @@
 # 此时 db 服务会启动但不会被使用，或可直接注释掉 db 服务。
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: outfit-db
     restart: unless-stopped
     environment:

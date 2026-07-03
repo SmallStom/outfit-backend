@@ -1,9 +1,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Query, Request
 
-from app.core.exceptions import AIException
+from app.core.exceptions import AIException, NotFoundException
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
 from app.schemas.item import (
@@ -13,6 +13,7 @@ from app.schemas.item import (
     ItemUpdate,
     WearRecordResponse,
 )
+from app.services.ai.feature_extraction import enqueue_extraction
 from app.services.item_service import (
     COMMON_TAGS,
     create_item,
@@ -43,14 +44,26 @@ async def get_items(
     user_id: CurrentUserId,
     category: Annotated[str | None, Query()] = None,
     tag: Annotated[str | None, Query()] = None,
+    tags: Annotated[list[str] | None, Query()] = None,
     search: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
 ):
+    # 兼容 wx.request 将数组序列化为逗号分隔字符串的情况
+    normalized_tags: list[str] | None = None
+    if tags:
+        normalized_tags = []
+        for t in tags:
+            normalized_tags.extend([s.strip() for s in t.split(",") if s.strip()])
+        if not normalized_tags:
+            normalized_tags = None
     items = await list_items(
         db=db,
         user_id=UUID(user_id),
         category=category,
         tag=tag,
+        tags=normalized_tags,
         search=search,
+        sort=sort,
     )
     return success(
         data=ItemListResponse(
@@ -66,6 +79,7 @@ async def create_new_item(
     db: DbSession,
     user_id: CurrentUserId,
     request: Request,
+    background_tasks: BackgroundTasks,
 ):
     item = await create_item(
         db=db,
@@ -73,6 +87,8 @@ async def create_new_item(
         data=body,
         base_url=str(request.base_url),
     )
+    # 触发异步特征提取（MLLM 属性 + 视觉向量）
+    background_tasks.add_task(enqueue_extraction, item.id)
     return success(data=ItemOut.model_validate(item).model_dump(by_alias=True))
 
 
@@ -128,3 +144,16 @@ async def wear_item(
             last_worn_at=item.last_worn_at,
         ).model_dump(by_alias=True)
     )
+
+
+@router.post("/{item_id}/retry-extract")
+async def retry_extract(
+    item_id: UUID,
+    db: DbSession,
+    user_id: CurrentUserId,
+    background_tasks: BackgroundTasks,
+):
+    """手动重试单品的特征提取（用于失败恢复）。"""
+    item = await get_item(db=db, user_id=UUID(user_id), item_id=item_id)
+    background_tasks.add_task(enqueue_extraction, item.id)
+    return success(data={"status": "queued"})
