@@ -94,7 +94,8 @@ class Settings(BaseSettings):
         default="tongyi-embedding-vision-flash-2026-03-06", alias="AI_EMBEDDING_MODEL"
     )
     ai_rerank_model: str = Field(default="qwen3.7-plus", alias="AI_RERANK_MODEL")
-    ai_embedding_dim: int = Field(default=1024, alias="AI_EMBEDDING_DIM")
+    ai_embedding_dim: int = Field(default=768, alias="AI_EMBEDDING_DIM")
+    ai_image_allowed_hosts: str = Field(default="", alias="AI_IMAGE_ALLOWED_HOSTS")
 
     # Recommendation scoring weights
     reco_weight_style: float = Field(default=0.35, alias="RECO_WEIGHT_STYLE")
@@ -107,10 +108,10 @@ class Settings(BaseSettings):
     reco_cache_ttl_minutes: int = Field(default=120, alias="RECO_CACHE_TTL_MINUTES")
     reco_min_interval_seconds: int = Field(default=30, alias="RECO_MIN_INTERVAL_SECONDS")
 
-    # QWeather
-    qweather_api_key: str = Field(default="", alias="QWEATHER_API_KEY")
-    qweather_host: str = Field(default="https://devapi.qweather.com", alias="QWEATHER_HOST")
-    qweather_cache_minutes: int = Field(default=30, alias="QWEATHER_CACHE_MINUTES")
+    # Tencent Map / Location Service
+    tencent_map_key: str = Field(default="", alias="TENCENT_MAP_KEY")
+    tencent_map_host: str = Field(default="https://apis.map.qq.com", alias="TENCENT_MAP_HOST")
+    tencent_map_weather_cache_minutes: int = Field(default=120, alias="TENCENT_MAP_WEATHER_CACHE_MINUTES")
 
 
 settings = Settings()

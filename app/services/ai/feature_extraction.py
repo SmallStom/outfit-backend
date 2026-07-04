@@ -10,11 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import AIException
 from app.db.session import AsyncSessionLocal
 from app.models.item import Item
 from app.models.item_embedding import ItemEmbedding
 from app.services.ai.dashscope_client import dashscope_client
+from app.services.ai.usage_logger import log_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,33 @@ def _apply_attributes(item: Item, attrs: dict[str, Any]) -> None:
     item.keywords = _str_list(attrs.get("keywords"))
 
 
+def _is_clothing(attrs: dict[str, Any]) -> tuple[bool, str | None]:
+    """根据 LLM 返回的 is_clothing 字段判断是否为有效服装。"""
+    # 新 schema：显式声明
+    is_clothing = attrs.get("is_clothing")
+    if isinstance(is_clothing, bool):
+        if not is_clothing:
+            note = attrs.get("validation_note")
+            if isinstance(note, str) and note.strip():
+                return False, note.strip()[:100]
+            return False, "未检测到服装，请上传平铺或悬挂的衣物照片"
+        return True, None
+
+    # 兼容旧数据：没有 is_clothing 字段时，根据 category 兜底判断
+    category = attrs.get("category")
+    allowed = {"上衣", "裤子", "裙子", "外套", "鞋履", "配饰", "top", "bottom", "dress", "outer", "shoes", "acc"}
+    if isinstance(category, str) and category in allowed:
+        return True, None
+
+    return False, "未检测到服装，请上传平铺或悬挂的衣物照片"
+
+
+def _safe_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
+    """安全取值，忽略 null/None。"""
+    value = attrs.get(key, default)
+    return default if value is None else value
+
+
 async def _upsert_embedding(
     db: AsyncSession, user_id: UUID, item_id: UUID, embedding: list[float]
 ) -> None:
@@ -163,12 +192,37 @@ async def extract_and_store(db: AsyncSession, item_id: UUID) -> None:
     if item is None:
         return
 
+    # 校验是否为有效服装
+    is_valid, error_note = _is_clothing(attrs)
+    if not is_valid:
+        item.feature_status = "failed"
+        item.feature_error = error_note
+        await db.commit()
+        logger.warning("feature_extraction not clothing item=%s: %s", item_id, error_note)
+        return
+
     _apply_attributes(item, attrs)
     item.feature_status = "success"
     item.feature_error = None
     await _upsert_embedding(db, item.user_id, item.id, embedding)
     await db.commit()
     logger.info("feature_extraction success item=%s", item_id)
+
+    # 记录 AI 调用（不计费，仅作后续计费依据）
+    await log_ai_usage(
+        db,
+        user_id=item.user_id,
+        action="attribute_extract",
+        model=settings.ai_attribute_model,
+        metadata={"item_id": str(item.id)},
+    )
+    await log_ai_usage(
+        db,
+        user_id=item.user_id,
+        action="embedding",
+        model=settings.ai_embedding_model,
+        metadata={"item_id": str(item.id), "dim": len(embedding)},
+    )
 
 
 async def enqueue_extraction(item_id: UUID) -> None:

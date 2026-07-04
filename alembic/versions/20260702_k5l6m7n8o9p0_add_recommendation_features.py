@@ -75,7 +75,7 @@ def upgrade() -> None:
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            embedding vector(1024) NOT NULL,
+            embedding vector(768) NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             CONSTRAINT uq_item_embeddings_item_id UNIQUE (item_id)

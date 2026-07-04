@@ -18,7 +18,8 @@ from app.models.item import Item
 from app.models.item_embedding import ItemEmbedding
 from app.models.outfit import Outfit, OutfitItem
 from app.models.outfit_feedback import OutfitFeedback
-from app.services.ai.dashscope_client import dashscope_client
+from app.services.ai.dashscope_client import dashscope_client, sanitize_prompt_text
+from app.services.ai.usage_logger import log_ai_usage
 from app.services.ai.weather_service import WeatherResult
 from app.services.reco import scorer
 
@@ -218,18 +219,81 @@ def _weights(is_new_user: bool = False) -> dict[str, float]:
     }
 
 
-def _describe_item(item: Item) -> dict[str, Any]:
-    return {
-        "id": str(item.id),
-        "name": item.name,
-        "category": item.category,
-        "color": item.color_hex_list or ([item.color_hex] if item.color_hex else []),
-        "formality": item.formality,
-        "keywords": item.keywords,
-        "occasion_tags": item.occasion_tags,
-        "material": item.material,
-        "thickness": item.thickness,
-    }
+def _build_item_description(item: Item) -> str:
+    attrs = item.attributes or {}
+    parts: list[str] = []
+    if attrs.get("visual_description"):
+        parts.append(sanitize_prompt_text(attrs["visual_description"], max_len=120))
+    else:
+        if item.sub_category:
+            parts.append(sanitize_prompt_text(item.sub_category, max_len=30))
+        elif item.category:
+            parts.append(sanitize_prompt_text(item.category, max_len=20))
+        if item.color_hex_list:
+            hex_str = ", ".join(
+                sanitize_prompt_text(c, max_len=10) for c in item.color_hex_list
+            )
+            parts.append(f"颜色 {hex_str}")
+        if item.material:
+            parts.append(f"材质 {sanitize_prompt_text(item.material, max_len=40)}")
+        if item.thickness:
+            parts.append(f"厚度 {item.thickness}")
+    if not parts:
+        parts.append("暂无详细描述")
+    return "，".join(parts)
+
+
+def _pick_top_items(
+    top_candidates: list[dict[str, Any]], key: str, n: int = 5
+) -> list[Item]:
+    """从高分组合中，按单品的最佳组合得分挑选 top-N 单品。"""
+    best_score: dict[UUID, float] = {}
+    item_map: dict[UUID, Item] = {}
+    for combo in top_candidates:
+        item: Item = combo[key]
+        score = combo["score"]
+        if item.id not in best_score or score > best_score[item.id]:
+            best_score[item.id] = score
+            item_map[item.id] = item
+    sorted_items = sorted(
+        item_map.values(), key=lambda x: best_score[x.id], reverse=True
+    )
+    return sorted_items[:n]
+
+
+def _build_rerank_user_prompt(
+    weather: WeatherResult,
+    occasion: str,
+    top_items: list[Item],
+    bottom_items: list[Item],
+) -> str:
+    """按用户要求：上装在一起、下装在一起，让 LLM 自由组合。"""
+    lines: list[str] = []
+    lines.append("【当前环境】")
+    lines.append(f"天气：{weather.text}")
+    lines.append(f"温度：{weather.temperature}℃")
+    lines.append(f"场合：{occasion}")
+    lines.append("")
+
+    lines.append("【候选上装列表】")
+    for item in top_items:
+        lines.append(f"--- 上装 ID: {item.id} ---")
+        lines.append(f"名称：{sanitize_prompt_text(item.name, max_len=25)}")
+        lines.append(f"描述：{_build_item_description(item)}")
+        lines.append("")
+
+    lines.append("【候选下装列表】")
+    for item in bottom_items:
+        lines.append(f"--- 下装 ID: {item.id} ---")
+        lines.append(f"名称：{sanitize_prompt_text(item.name, max_len=25)}")
+        lines.append(f"描述：{_build_item_description(item)}")
+        lines.append("")
+
+    lines.append(
+        "请从候选上装列表和候选下装列表中自由组合，输出最佳的3套上下装搭配。"
+        "输出格式必须是JSON对象：{\"result\": [{\"top_id\": \"...\", \"bottom_id\": \"...\", \"score\": 8.5, \"reason\": \"...\"}, ...]}"
+    )
+    return "\n".join(lines)
 
 
 def _rule_reason(top: Item, bottom: Item, scores: dict[str, float]) -> str:
@@ -287,6 +351,7 @@ async def recommend_daily(
     weather: WeatherResult,
     top_n: int | None = None,
     force_refresh: bool = False,
+    use_llm_rerank: bool = False,
 ) -> list[Outfit]:
     top_n = top_n or settings.reco_top_k
     key = _cache_key(user_id, weather.temperature, weather.text)
@@ -340,30 +405,56 @@ async def recommend_daily(
     if fallback_mode:
         random.shuffle(top_candidates)
 
-    # LLM 精排：仅当有 API Key、候选足够且非低分降级时
+    # LLM 精排：仅当手动刷新（use_llm_rerank=True）、有 API Key、候选足够且非低分降级时
     ranked: list[dict[str, Any]] = []
-    if settings.ai_api_key and len(top_candidates) >= top_n and not fallback_mode:
+    if settings.ai_api_key and len(top_candidates) >= top_n and not fallback_mode and use_llm_rerank:
         try:
-            desc_candidates = [
-                {
-                    "index": i,
-                    "top": _describe_item(c["top"]),
-                    "bottom": _describe_item(c["bottom"]),
-                    "score_breakdown": c["scores"],
-                }
-                for i, c in enumerate(top_candidates)
-            ]
-            picks = await dashscope_client.rerank_outfits(
-                desc_candidates,
-                {"temperature": weather.temperature, "text": weather.text, "city": weather.city},
-                top_n,
+            top_items = _pick_top_items(top_candidates, "top", n=3)
+            bottom_items = _pick_top_items(top_candidates, "bottom", n=3)
+            top_map = {str(item.id): item for item in top_items}
+            bottom_map = {str(item.id): item for item in bottom_items}
+            occasion = top_items[0].occasion_tags[0] if (
+                top_items[0].occasion_tags
+            ) else "日常"
+            user_prompt = _build_rerank_user_prompt(
+                weather, occasion, top_items, bottom_items
+            )
+            picks = await dashscope_client.rerank_outfits(user_prompt, top_n)
+            # 记录 LLM 精排调用
+            await log_ai_usage(
+                db,
+                user_id=user_id,
+                action="rerank",
+                model=settings.ai_rerank_model,
+                metadata={
+                    "top_count": len(top_items),
+                    "bottom_count": len(bottom_items),
+                    "top_n": top_n,
+                },
             )
             for pick in picks:
-                idx = pick["index"]
-                if idx >= len(top_candidates):
+                top = top_map.get(pick.get("top_id"))
+                bottom = bottom_map.get(pick.get("bottom_id"))
+                if top is None or bottom is None:
                     continue
-                combo = top_candidates[idx]
-                ranked.append({**combo, "reason": pick["reason"] or _rule_reason(combo["top"], combo["bottom"], combo["scores"])})
+                # 复用该组合的打分（找不到时兜底计算）
+                combo = next(
+                    (
+                        c
+                        for c in top_candidates
+                        if c["top"].id == top.id and c["bottom"].id == bottom.id
+                    ),
+                    None,
+                )
+                if combo is None:
+                    scores = _score_combo(
+                        top, bottom, emb_map, weather.temperature, feedback_map, disliked_items
+                    )
+                    total = scorer.total_score(scores, weights) - scores.get("penalty", 0.0)
+                    combo = {"top": top, "bottom": bottom, "scores": scores, "score": max(0.0, total)}
+                ranked.append(
+                    {**combo, "reason": pick["reason"] or _rule_reason(combo["top"], combo["bottom"], combo["scores"])}
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("rerank fallback due to %s", exc)
 

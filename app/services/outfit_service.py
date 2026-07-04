@@ -180,7 +180,11 @@ async def recommend_daily(
     """新推荐流水线：多模态属性 + 向量 + 加权打分 + LLM 精排，返回 Top-K 套。"""
     try:
         outfits = await reco_engine.recommend_daily(
-            db=db, user_id=user_id, weather=weather, force_refresh=force_refresh
+            db=db,
+            user_id=user_id,
+            weather=weather,
+            force_refresh=force_refresh,
+            use_llm_rerank=force_refresh,  # 仅手动刷新（重新生成）才调 LLM
         )
     except InsufficientCandidatesError as exc:
         # 候选池不足时直接给出明确业务提示，不再 fallback 强行推荐

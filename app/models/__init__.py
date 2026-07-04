@@ -1,4 +1,5 @@
 from app.db.base import Base
+from app.models.ai_usage_log import AIUsageLog
 from app.models.body_profile import BodyProfile
 from app.models.care_record import CareRecord
 from app.models.credit import CreditAccount, CreditPackage, CreditTransaction
@@ -25,6 +26,7 @@ from app.models.wear_history import WearHistory
 
 __all__ = [
     "Base",
+    "AIUsageLog",
     "User",
     "UserSettings",
     "UserFollow",
