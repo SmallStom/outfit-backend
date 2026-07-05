@@ -13,6 +13,9 @@ class OutfitItemEntry(CamelBaseModel):
     image_url: str = ""
     image_color: str | None = None
     thumbnail_url: str | None = None
+    price: int | None = None
+    source_url: str | None = None
+    is_shop_item: bool = False
 
 
 class OutfitBase(CamelBaseModel):
@@ -66,8 +69,17 @@ class WeatherInfo(CamelBaseModel):
     city: str = "未知"
 
 
+class ShopOutfitOut(OutfitBase):
+    id: str
+    items: list[OutfitItemEntry] = Field(default_factory=list)
+    reason: str | None = None
+    score: float | None = None
+    temperature: float | None = None
+
+
 class DailyRecommendResponse(CamelBaseModel):
     list: list[OutfitOut]
+    shop: list[ShopOutfitOut]
     weather: WeatherInfo
 
 

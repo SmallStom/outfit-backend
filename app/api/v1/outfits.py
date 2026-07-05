@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 from app.core.rate_limiter import check_rate_limit
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
+from app.models.shop_item import ShopItem
 from app.schemas.outfit import (
     DailyRecommendResponse,
     FeedbackCreate,
@@ -14,9 +15,11 @@ from app.schemas.outfit import (
     OutfitCollectionOut,
     OutfitCollectionUpdate,
     OutfitCreate,
+    OutfitItemEntry,
     OutfitListResponse,
     OutfitOut,
     OutfitUpdate,
+    ShopOutfitOut,
     WeatherInfo,
 )
 from app.services.ai.weather_service import get_weather
@@ -35,6 +38,7 @@ from app.services.outfit_service import (
     update_outfit,
 )
 from app.services.outfit_service import _item_entry
+from app.services.reco import shop_recommender
 
 outfits_router = APIRouter(prefix="/outfits", tags=["outfits"])
 collections_router = APIRouter(prefix="/outfit-collections", tags=["outfit-collections"])
@@ -73,6 +77,35 @@ def _collection_out(collection) -> OutfitCollectionOut:
     )
 
 
+def _shop_item_entry(item: ShopItem) -> OutfitItemEntry:
+    return OutfitItemEntry(
+        id=item.id,
+        name=item.name,
+        category=item.category,
+        image_url=item.image_url or "",
+        image_color=item.image_color,
+        thumbnail_url=item.thumbnail_url,
+        price=item.price,
+        source_url=item.source_url,
+        is_shop_item=True,
+    )
+
+
+def _shop_outfit_out(combo: dict) -> ShopOutfitOut:
+    return ShopOutfitOut(
+        id=combo["id"],
+        name=combo["name"],
+        cover_url=combo["cover_url"],
+        cover_color=combo["cover_color"],
+        weather=combo["weather"],
+        is_ai_generated=False,
+        reason=combo["reason"],
+        score=combo["score"],
+        temperature=combo["temperature"],
+        items=[_shop_item_entry(i) for i in combo["items"]],
+    )
+
+
 @outfits_router.get("/recommend")
 async def recommend(
     db: DbSession,
@@ -85,14 +118,20 @@ async def recommend(
     # 限流：防止 refresh=true 反复触发 LLM/天气 API 导致费用暴涨
     check_rate_limit(user_id, "outfits:recommend")
     weather = await get_weather(lng=lng, lat=lat, city=city)
-    outfits = await recommend_daily(
+    wardrobe_outfits = await recommend_daily(
         db=db,
         user_id=UUID(user_id),
         weather=weather,
         force_refresh=refresh,
     )
+    shop_combos = await shop_recommender.recommend_shop_outfits(
+        db=db,
+        user_id=UUID(user_id),
+        weather=weather,
+    )
     payload = DailyRecommendResponse(
-        list=[_outfit_out(o) for o in outfits],
+        list=[_outfit_out(o) for o in wardrobe_outfits],
+        shop=[_shop_outfit_out(c) for c in shop_combos],
         weather=WeatherInfo(**weather.to_dict()),
     )
     return success(data=payload.model_dump(by_alias=True))

@@ -186,9 +186,9 @@ async def recommend_daily(
             force_refresh=force_refresh,
             use_llm_rerank=force_refresh,  # 仅手动刷新（重新生成）才调 LLM
         )
-    except InsufficientCandidatesError as exc:
-        # 候选池不足时直接给出明确业务提示，不再 fallback 强行推荐
-        raise BadRequestException(exc.message) from exc
+    except InsufficientCandidatesError:
+        # 候选池不足时返回空列表，让外部好物等其它区块正常展示
+        return []
 
     if outfits:
         return outfits

@@ -17,6 +17,7 @@ from app.models.promo_code import PromoCode, PromoCodeUsage
 from app.models.puzzle_result import PuzzleResult
 from app.models.purchase_preview import PurchasePreview
 from app.models.settings import UserSettings
+from app.models.shop_item import ShopItem
 from app.models.sign_in import SignInRecord
 from app.models.task import Task, UserTask
 from app.models.tryon_preset import TryonPreset
@@ -50,6 +51,7 @@ __all__ = [
     "PromoCodeUsage",
     "FavoritePost",
     "FavoriteItem",
+    "ShopItem",
     "MembershipTier",
     "UserMembership",
     "CreditAccount",

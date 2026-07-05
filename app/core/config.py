@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     reco_weight_bias: float = Field(default=0.05, alias="RECO_WEIGHT_BIAS")
     reco_top_k: int = Field(default=3, alias="RECO_TOP_K")
     reco_candidate_k: int = Field(default=10, alias="RECO_CANDIDATE_K")
+    reco_shop_top_k: int = Field(default=5, alias="RECO_SHOP_TOP_K")
     reco_cache_ttl_minutes: int = Field(default=120, alias="RECO_CACHE_TTL_MINUTES")
     reco_min_interval_seconds: int = Field(default=30, alias="RECO_MIN_INTERVAL_SECONDS")
 
