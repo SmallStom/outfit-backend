@@ -81,3 +81,14 @@ class TryonResultOut(BaseModel):
     result_image_url: str | None = None
     error_message: str | None = None
     created_at: datetime
+
+
+class OutfitTryonRequest(BaseModel):
+    """推荐搭配一键试穿请求体。"""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    person_image: str = Field(..., min_length=1)

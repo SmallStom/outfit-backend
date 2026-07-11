@@ -1,6 +1,8 @@
-"""五维打分纯函数：Style / Color / Occasion / Weather / User_Bias。
+"""六维打分纯函数：Style / Color / Silhouette / Occasion / Weather / User_Bias。
 
 所有函数返回 [0.0, 1.0] 之间的浮点分数。
+V1 函数（style_similarity, occasion_fit）保留用于向后兼容；V2 新增 silhouette_balance、
+style_vector_similarity、occasion_scores_fit。
 """
 from __future__ import annotations
 
@@ -177,3 +179,157 @@ def user_bias(item_ids: Iterable, feedback_map: dict) -> float:
 
 def total_score(scores: dict[str, float], weights: dict[str, float]) -> float:
     return sum(scores.get(k, 0.0) * w for k, w in weights.items())
+
+
+# ================================================================== #
+#                      V2 新增打分函数                                 #
+# ================================================================== #
+
+# ---------- 6. Silhouette balance (V2 新增) ---------- #
+
+# 廓形搭配规则矩阵: (top_shape, bottom_shape) -> score
+_SILHOUETTE_RULES: dict[tuple[str, str], float] = {
+    ("slim", "loose"): 0.95,   # 上紧下松
+    ("loose", "slim"): 0.85,   # 上松下紧
+    ("slim", "slim"): 0.70,    # 上紧下紧
+    ("loose", "loose"): 0.60,  # 上松下松
+    ("regular", "loose"): 0.85,
+    ("slim", "regular"): 0.80,
+    ("loose", "regular"): 0.75,
+    ("regular", "slim"): 0.80,
+    ("regular", "regular"): 0.75,
+}
+
+# 廓形字母组合加分
+_SILHOUETTE_BONUS: dict[tuple[str, str], float] = {
+    ("X", "A"): 0.05,
+    ("X", "X"): 0.05,
+    ("A", "A"): 0.05,
+    ("H", "A"): 0.03,
+}
+
+
+def silhouette_balance(
+    top_silhouette: str | None,
+    bottom_silhouette: str | None,
+    top_volume: int | None,
+    bottom_volume: int | None,
+    top_drape: int | None = None,
+    bottom_drape: int | None = None,
+) -> float:
+    """V2 廓形平衡评分：基于上紧下松/上松下紧等规则。
+
+    参数:
+        top_silhouette: 上装廓形字母 H/A/X/O/T
+        bottom_silhouette: 下装廓形字母
+        top_volume: 上装宽松度 1-5
+        bottom_volume: 下装宽松度 1-5
+        top_drape: 上装垂坠感 1-5
+        bottom_drape: 下装垂坠感 1-5
+    返回: [0.0, 1.0]
+    """
+    if not top_volume or not bottom_volume:
+        return 0.5  # 缺失时中性分
+
+    # volume → shape 分类
+    def _to_shape(v: int) -> str:
+        if v <= 2:
+            return "slim"
+        if v <= 3:
+            return "regular"
+        return "loose"
+
+    top_shape = _to_shape(top_volume)
+    bottom_shape = _to_shape(bottom_volume)
+
+    base = _SILHOUETTE_RULES.get((top_shape, bottom_shape), 0.70)
+
+    # 廓形字母组合微调
+    if top_silhouette and bottom_silhouette:
+        bonus = _SILHOUETTE_BONUS.get((top_silhouette, bottom_silhouette), 0.0)
+        base = min(1.0, base + bonus)
+
+    # 垂坠感协调（差异≤2 加分）
+    if top_drape and bottom_drape and abs(top_drape - bottom_drape) <= 2:
+        base = min(1.0, base + 0.03)
+
+    return max(0.0, min(1.0, base))
+
+
+# ---------- 7. Style vector similarity (V2 升级) ---------- #
+
+def style_vector_similarity(
+    vec_top: list[float] | np.ndarray | None,
+    vec_bottom: list[float] | np.ndarray | None,
+    style_vec_top: dict | None,
+    style_vec_bottom: dict | None,
+) -> float:
+    """V2 风格相似度：视觉 embedding 余弦 50% + style_vector 余弦 50%。
+
+    当 style_vector 缺失时，退化为纯视觉 embedding 相似度（兼容旧数据）。
+    """
+    # 视觉 embedding 余弦相似度
+    cos_visual = 0.5
+    if vec_top is not None and vec_bottom is not None:
+        a, b = np.asarray(vec_top, dtype=np.float32), np.asarray(vec_bottom, dtype=np.float32)
+        na, nb = np.linalg.norm(a), np.linalg.norm(b)
+        if na > 0 and nb > 0:
+            cos_visual = (float(np.dot(a, b) / (na * nb)) + 1) / 2
+
+    # style_vector 余弦相似度
+    cos_style = 0.5
+    has_style = False
+    if style_vec_top and style_vec_bottom:
+        keys = set(style_vec_top.keys()) & set(style_vec_bottom.keys())
+        if keys:
+            a = np.array([style_vec_top[k] for k in keys], dtype=np.float32)
+            b = np.array([style_vec_bottom[k] for k in keys], dtype=np.float32)
+            na, nb = np.linalg.norm(a), np.linalg.norm(b)
+            if na > 0 and nb > 0:
+                cos_style = (float(np.dot(a, b) / (na * nb)) + 1) / 2
+                has_style = True
+
+    if has_style:
+        return max(0.0, min(1.0, 0.5 * cos_visual + 0.5 * cos_style))
+    return max(0.0, min(1.0, cos_visual))
+
+
+# ---------- 8. Occasion scores fit (V2 升级) ---------- #
+
+_OCCASION_LABEL_MAP = {
+    "office": "办公", "meeting": "会议", "date": "约会",
+    "travel": "旅行", "daily": "日常", "party": "派对",
+}
+
+
+def occasion_scores_fit(
+    scores_top: dict | None,
+    scores_bottom: dict | None,
+    target_occasion: str | None = None,
+) -> float:
+    """V2 场合适配：基于 occasion_scores 评分制。
+
+    参数:
+        scores_top: 上装 occasion_scores {"office": 2, "date": 5, ...}
+        scores_bottom: 下装 occasion_scores
+        target_occasion: 目标场景（如 "date"），None 时计算整体相似度
+    返回: [0.0, 1.0]
+    """
+    if not scores_top or not scores_bottom:
+        return 0.5
+
+    # 指定场景：取该场景评分均值 (1-5 → 0.2-1.0)
+    if target_occasion and target_occasion in scores_top and target_occasion in scores_bottom:
+        avg = (scores_top[target_occasion] + scores_bottom[target_occasion]) / 2.0
+        return max(0.0, min(1.0, avg / 5.0))
+
+    # 未指定场景：计算所有场景的余弦相似度
+    keys = set(scores_top.keys()) & set(scores_bottom.keys())
+    if not keys:
+        return 0.5
+    a = np.array([scores_top[k] for k in keys], dtype=np.float32)
+    b = np.array([scores_bottom[k] for k in keys], dtype=np.float32)
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na > 0 and nb > 0:
+        return (float(np.dot(a, b) / (na * nb)) + 1) / 2
+    return 0.5

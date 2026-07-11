@@ -97,22 +97,53 @@ class Settings(BaseSettings):
     ai_embedding_dim: int = Field(default=768, alias="AI_EMBEDDING_DIM")
     ai_image_allowed_hosts: str = Field(default="", alias="AI_IMAGE_ALLOWED_HOSTS")
 
-    # Recommendation scoring weights
-    reco_weight_style: float = Field(default=0.35, alias="RECO_WEIGHT_STYLE")
+    # Recommendation scoring weights (V2: 六维融合)
+    reco_weight_style: float = Field(default=0.25, alias="RECO_WEIGHT_STYLE")
     reco_weight_color: float = Field(default=0.25, alias="RECO_WEIGHT_COLOR")
-    reco_weight_occasion: float = Field(default=0.20, alias="RECO_WEIGHT_OCCASION")
-    reco_weight_weather: float = Field(default=0.15, alias="RECO_WEIGHT_WEATHER")
-    reco_weight_bias: float = Field(default=0.05, alias="RECO_WEIGHT_BIAS")
+    reco_weight_occasion: float = Field(default=0.15, alias="RECO_WEIGHT_OCCASION")
+    reco_weight_weather: float = Field(default=0.10, alias="RECO_WEIGHT_WEATHER")
+    reco_weight_bias: float = Field(default=0.10, alias="RECO_WEIGHT_BIAS")
     reco_top_k: int = Field(default=3, alias="RECO_TOP_K")
     reco_candidate_k: int = Field(default=10, alias="RECO_CANDIDATE_K")
+    # 大规模候选预筛选：上装随机采样数 + 每个上装的 top-M 下装候选
+    reco_prefilter_top_n: int = Field(default=15, alias="RECO_PREFILTER_TOP_N")
+    reco_prefilter_bottom_m: int = Field(default=15, alias="RECO_PREFILTER_BOTTOM_M")
+    reco_prefilter_standalone_n: int = Field(default=10, alias="RECO_PREFILTER_STANDALONE_N")
+    # 预筛选触发的候选数量阈值（上装×下装超过此值时启用预筛选）
+    reco_prefilter_threshold: int = Field(default=200, alias="RECO_PREFILTER_THRESHOLD")
     reco_shop_top_k: int = Field(default=5, alias="RECO_SHOP_TOP_K")
     reco_cache_ttl_minutes: int = Field(default=120, alias="RECO_CACHE_TTL_MINUTES")
     reco_min_interval_seconds: int = Field(default=30, alias="RECO_MIN_INTERVAL_SECONDS")
+
+    # V2 新增评分维度权重
+    reco_weight_silhouette: float = Field(default=0.15, alias="RECO_WEIGHT_SILHOUETTE")
+    reco_weight_preference: float = Field(default=0.10, alias="RECO_WEIGHT_PREFERENCE")
+    # 避免重复推荐惩罚
+    reco_worn_within_days: int = Field(default=7, alias="RECO_WORN_WITHIN_DAYS")
+    reco_worn_penalty: float = Field(default=0.20, alias="RECO_WORN_PENALTY")
+    reco_repeat_days: int = Field(default=3, alias="RECO_REPEAT_DAYS")
+    reco_repeat_threshold: int = Field(default=3, alias="RECO_REPEAT_THRESHOLD")
+    reco_repeat_penalty: float = Field(default=0.15, alias="RECO_REPEAT_PENALTY")
+    # 偏好学习融合权重
+    reco_preference_blend: float = Field(default=0.25, alias="RECO_PREFERENCE_BLEND")
+    # V2 算法开关（true=V2, false=V1）
+    reco_use_v2: bool = Field(default=True, alias="RECO_USE_V2")
 
     # Tencent Map / Location Service
     tencent_map_key: str = Field(default="", alias="TENCENT_MAP_KEY")
     tencent_map_host: str = Field(default="https://apis.map.qq.com", alias="TENCENT_MAP_HOST")
     tencent_map_weather_cache_minutes: int = Field(default=120, alias="TENCENT_MAP_WEATHER_CACHE_MINUTES")
+
+    # Phase 7: 真人试穿增强 - 多适配器 API Key（V3.2，可选配置）
+    tryon_outfitanyone_api_key: str = Field(default="", alias="TRYON_OUTFITANYONE_API_KEY")
+    tryon_idmvton_api_key: str = Field(default="", alias="TRYON_IDMVTON_API_KEY")
+    tryon_idmvton_base_url: str = Field(
+        default="https://idm-vton.example.com/api", alias="TRYON_IDMVTON_BASE_URL"
+    )
+    tryon_catvton_api_key: str = Field(default="", alias="TRYON_CATVTON_API_KEY")
+    tryon_catvton_base_url: str = Field(
+        default="https://cat-vton.example.com/api", alias="TRYON_CATVTON_BASE_URL"
+    )
 
 
 settings = Settings()

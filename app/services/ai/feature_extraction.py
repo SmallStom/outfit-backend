@@ -82,25 +82,123 @@ def _hex_list(value: Any, max_len: int = 3) -> list[str] | None:
     return result or None
 
 
-def _apply_attributes(item: Item, attrs: dict[str, Any]) -> None:
-    """把 LLM JSON 写回 Item 各字段。原有 category 不覆盖以尊重用户选择。"""
-    item.attributes = attrs
+# V2 风格向量维度
+_STYLE_KEYS = frozenset({
+    "minimalist", "commute", "street", "sweet", "retro", "sporty",
+    "luxury", "y2k", "japanese", "korean", "academic", "gorpcore",
+})
 
-    style = attrs.get("style_attributes") or {}
-    item.formality = _clamp01(style.get("formality"))
-    item.femininity = _clamp01(style.get("femininity"))
-    item.athletic = _clamp01(style.get("athletic"))
-    item.vintage = _clamp01(style.get("vintage"))
+_VALID_SILHOUETTES = frozenset({"H", "A", "X", "O", "T"})
+
+
+def _clamp_silhouette(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip().upper()
+    return v if v in _VALID_SILHOUETTES else None
+
+
+def _clamp_scores_dict(value: Any, low: int = 1, high: int = 5) -> dict[str, int] | None:
+    """将评分字典的值 clamp 到 [low, high] 范围。"""
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, int] = {}
+    for k, v in value.items():
+        if not isinstance(k, str):
+            continue
+        clamped = _clamp_int(v, low, high)
+        if clamped is not None:
+            result[k] = clamped
+    return result or None
+
+
+def _occasion_keys(scores: dict | None) -> list[str] | None:
+    """从 occasion_scores 提取高分场景作为 occasion_tags fallback。"""
+    if not isinstance(scores, dict) or not scores:
+        return None
+    # 取评分 >=3 的场景
+    high = sorted(
+        [(k, v) for k, v in scores.items() if isinstance(v, (int, float)) and v >= 3],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return [k for k, _ in high[:5]] or None
+
+
+def _apply_attributes(item: Item, attrs: dict[str, Any]) -> None:
+    """V2: 写回四层属性到 Item 各字段。VLM 提取的 category 和 suggested_name 覆盖用户输入。"""
+    item.attributes = attrs  # 完整 JSONB 保留
+
+    # ---------- Layer1: 客观属性 ----------
+    # category: VLM 提取的分类覆盖用户输入（用户可能未填或填错）
+    vlm_category = attrs.get("category")
+    if isinstance(vlm_category, str) and vlm_category.strip():
+        cat = vlm_category.strip().lower()
+        # 规范化中文分类为英文
+        cat_map = {"上衣": "top", "裤子": "bottom", "裙子": "dress", "连衣裙": "dress",
+                   "外套": "outerwear", "鞋履": "shoes", "鞋子": "shoes", "配饰": "accessory",
+                   "套装": "set"}
+        item.category = cat_map.get(cat, cat)
+
+    # sub_category: 同样覆盖
+    vlm_sub = attrs.get("subcategory")
+    if isinstance(vlm_sub, str) and vlm_sub.strip():
+        item.sub_category = vlm_sub.strip().lower()
+
+    # suggested_name: VLM 生成的名称覆盖用户上传的名称
+    suggested = attrs.get("suggested_name")
+    if isinstance(suggested, str) and suggested.strip():
+        item.name = suggested.strip()[:50]
+
+    # is_full_outfit: 标记是否为完整套装/连衣裙（可单独推荐）
+    is_full = attrs.get("is_full_outfit")
+    if isinstance(is_full, bool):
+        item.is_full_outfit = is_full
+    elif item.category in ("dress", "set"):
+        item.is_full_outfit = True
+    else:
+        item.is_full_outfit = False
 
     item.thickness = _clamp_int(attrs.get("thickness"), 1, 5)
-
     t_min, t_max = _parse_temperature(attrs.get("suitable_temperature"))
     item.suitable_temp_min = t_min
     item.suitable_temp_max = t_max
-
-    item.occasion_tags = _str_list(attrs.get("suitable_occasions"))
     item.color_hex_list = _hex_list(attrs.get("color_hex"))
     item.keywords = _str_list(attrs.get("keywords"))
+    # occasion_tags: 优先从 suitable_occasions（旧字段兼容），否则从 occasion_scores 提取高分场景
+    occ_tags = _str_list(attrs.get("suitable_occasions")) or _occasion_keys(attrs.get("occasion_scores"))
+    item.occasion_tags = occ_tags
+
+    # ---------- Layer2: 视觉属性 ----------
+    item.silhouette = _clamp_silhouette(attrs.get("silhouette"))
+    item.visual_weight = _clamp_int(attrs.get("visual_weight"), 1, 5)
+    item.volume = _clamp_int(attrs.get("volume"), 1, 5)
+    item.drape = _clamp_int(attrs.get("drape"), 1, 5)
+    item.structure = _clamp_int(attrs.get("structure"), 1, 5)
+    item.visual_focus = _str_list(attrs.get("visual_focus"), max_len=5)
+    item.item_length = attrs.get("length") if isinstance(attrs.get("length"), str) else None
+
+    # ---------- Layer3: 风格向量 ----------
+    sv = attrs.get("style_vector")
+    if isinstance(sv, dict):
+        item.style_vector = {
+            k: _clamp01(v) for k, v in sv.items()
+            if isinstance(k, str) and k in _STYLE_KEYS
+        }
+    else:
+        item.style_vector = None
+
+    # ---------- Layer4: 搭配属性 ----------
+    item.occasion_scores = _clamp_scores_dict(attrs.get("occasion_scores"), 1, 5)
+    item.season_scores = _clamp_scores_dict(attrs.get("season_scores"), 1, 5)
+    pp = attrs.get("pairing_preferences")
+    if isinstance(pp, dict):
+        item.pairing_preferences = {
+            "best_match": _str_list(pp.get("best_match"), max_len=10) or [],
+            "avoid": _str_list(pp.get("avoid"), max_len=10) or [],
+        }
+    else:
+        item.pairing_preferences = None
 
 
 def _is_clothing(attrs: dict[str, Any]) -> tuple[bool, str | None]:

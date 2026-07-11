@@ -1,6 +1,8 @@
+import asyncio
 import ipaddress
 import logging
 import socket
+from abc import ABC, abstractmethod
 from urllib.parse import urlparse
 
 import httpx
@@ -635,3 +637,209 @@ async def list_tryon_results(
 
     result = await db.execute(stmt.limit(limit).offset(offset))
     return list(result.scalars().all()), total
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: 真人试穿适配器（V3.2）
+# ---------------------------------------------------------------------------
+
+
+def _coerce_garment_list(garment_image: str | list[str]) -> list[str]:
+    """把入参归一成非空 URL 列表。"""
+    if isinstance(garment_image, str):
+        return [garment_image] if garment_image else []
+    return [g for g in garment_image if g]
+
+
+class TryonAdapter(ABC):
+    """真人试穿适配器抽象基类。
+
+    所有适配器统一暴露 ``tryon(person_image, garment_image)`` 接口，
+    返回生成结果的公网图片 URL。
+    ``garment_image`` 支持单个 URL 字符串，或 URL 列表（上装 + 下装）。
+    """
+
+    @abstractmethod
+    async def tryon(
+        self, person_image: str, garment_image: str | list[str]
+    ) -> str:
+        """执行虚拟试穿，返回结果图 URL。"""
+        ...
+
+
+class OutfitAnyoneAdapter(TryonAdapter):
+    """阿里云 OutfitAnyone 试穿适配器（异步任务，内部轮询直至完成）。"""
+
+    def __init__(self) -> None:
+        self.api_key = settings.tryon_outfitanyone_api_key or settings.tryon_api_key
+        self.base_url = settings.tryon_base_url
+        self.model = settings.tryon_premium_model
+
+    async def tryon(
+        self, person_image: str, garment_image: str | list[str]
+    ) -> str:
+        if not self.api_key:
+            raise AIException("OutfitAnyone 试穿服务尚未配置 API Key")
+
+        garments = _coerce_garment_list(garment_image)
+        top_url = garments[0] if garments else None
+        bottom_url = garments[1] if len(garments) > 1 else None
+
+        payload: dict = {
+            "model": self.model,
+            "input": {"person_image_url": person_image},
+            "parameters": {"resolution": -1, "restore_face": True},
+        }
+        if top_url:
+            payload["input"]["top_garment_url"] = top_url
+        if bottom_url:
+            payload["input"]["bottom_garment_url"] = bottom_url
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/services/aigc/image2image/image-synthesis",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                        "X-DashScope-Async": "enable",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "OutfitAnyone 任务提交失败: %s - %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            raise AIException("OutfitAnyone 试穿任务提交失败") from exc
+        except httpx.RequestError as exc:
+            raise AIException("OutfitAnyone 网络异常", timeout=True) from exc
+
+        task_id = data.get("output", {}).get("task_id")
+        if not task_id:
+            raise AIException("OutfitAnyone 未返回任务 ID")
+
+        return await self._poll_task(task_id)
+
+    async def _poll_task(self, task_id: str) -> str:
+        """轮询任务状态，最多等待约 60s，返回 COS 结果图 URL。"""
+        for _ in range(20):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(
+                        f"{self.base_url}/tasks/{task_id}",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+            except httpx.RequestError as exc:
+                raise AIException("OutfitAnyone 网络异常", timeout=True) from exc
+
+            output = data.get("output", {})
+            status = output.get("task_status", "UNKNOWN").lower()
+            if status == "succeeded":
+                image_url = _extract_tryon_image_url(output)
+                if not image_url:
+                    raise AIException("OutfitAnyone 未返回结果图片")
+                return await upload_image_url_to_cos(image_url, folder="tryon")
+            if status == "failed":
+                raise AIException("OutfitAnyone 试穿生成失败")
+            await asyncio.sleep(3)
+        raise AIException("OutfitAnyone 试穿超时，请稍后重试")
+
+
+class IDMVTONAdapter(TryonAdapter):
+    """IDM-VTON 试穿适配器（单件 garment，同步返回结果图）。"""
+
+    def __init__(self) -> None:
+        self.api_key = settings.tryon_idmvton_api_key
+        self.base_url = settings.tryon_idmvton_base_url
+
+    async def tryon(
+        self, person_image: str, garment_image: str | list[str]
+    ) -> str:
+        if not self.api_key:
+            raise AIException("IDM-VTON 试穿服务尚未配置 API Key")
+
+        garments = _coerce_garment_list(garment_image)
+        garment_url = garments[0] if garments else None
+        if not garment_url:
+            raise BadRequestException("缺少衣物图片")
+
+        payload = {"person_image": person_image, "garment_image": garment_url}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/tryon",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "IDM-VTON 试穿失败: %s - %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            raise AIException("IDM-VTON 试穿失败") from exc
+        except httpx.RequestError as exc:
+            raise AIException("IDM-VTON 网络异常", timeout=True) from exc
+
+        image_url = data.get("result_image") or data.get("image_url")
+        if not image_url:
+            raise AIException("IDM-VTON 未返回结果图片")
+        return await upload_image_url_to_cos(image_url, folder="tryon")
+
+
+class CatVTONAdapter(TryonAdapter):
+    """CatVTON 试穿适配器（单件 garment，同步返回结果图）。"""
+
+    def __init__(self) -> None:
+        self.api_key = settings.tryon_catvton_api_key
+        self.base_url = settings.tryon_catvton_base_url
+
+    async def tryon(
+        self, person_image: str, garment_image: str | list[str]
+    ) -> str:
+        if not self.api_key:
+            raise AIException("CatVTON 试穿服务尚未配置 API Key")
+
+        garments = _coerce_garment_list(garment_image)
+        garment_url = garments[0] if garments else None
+        if not garment_url:
+            raise BadRequestException("缺少衣物图片")
+
+        payload = {"person_image": person_image, "garment_image": garment_url}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/tryon",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "CatVTON 试穿失败: %s - %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            raise AIException("CatVTON 试穿失败") from exc
+        except httpx.RequestError as exc:
+            raise AIException("CatVTON 网络异常", timeout=True) from exc
+
+        image_url = data.get("result_image") or data.get("image_url")
+        if not image_url:
+            raise AIException("CatVTON 未返回结果图片")
+        return await upload_image_url_to_cos(image_url, folder="tryon")

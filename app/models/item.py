@@ -22,6 +22,8 @@ class Item(Base, UUIDMixin, TimestampMixin):
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_color: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
+    is_full_outfit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
     material: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -64,5 +66,28 @@ class Item(Base, UUIDMixin, TimestampMixin):
         String(20), default="pending", server_default="pending"
     )
     feature_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ---------- Layer2: 视觉属性（V2） ----------
+    silhouette: Mapped[str | None] = mapped_column(String(2), nullable=True)  # H/A/X/O/T
+    visual_weight: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5 很轻-很重
+    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5 修身-Oversize
+    drape: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5
+    structure: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5 柔软-挺括
+    visual_focus: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(20)), nullable=True
+    )  # shoulder/chest/waist/hip/leg
+    item_length: Mapped[str | None] = mapped_column(String(20), nullable=True)  # crop/regular/long
+
+    # ---------- Layer3: 风格向量（V2） ----------
+    style_vector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 结构: {"minimalist":0.7, "commute":0.4, "street":0.5, ...}
+
+    # ---------- Layer4: 搭配属性（V2） ----------
+    occasion_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 结构: {"office":2, "meeting":1, "date":5, "travel":4, "daily":5, "party":3}
+    season_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 结构: {"spring":4, "summer":5, "autumn":2, "winter":1}
+    pairing_preferences: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 结构: {"best_match": [...], "avoid": [...]}
 
     owner: Mapped["User"] = relationship("User", back_populates="items")

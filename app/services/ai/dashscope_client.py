@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -84,7 +85,7 @@ def sanitize_prompt_text(value: Any, max_len: int = 100) -> str:
 
 
 def _extract_json(text: str) -> Any:
-    """从容错文本中提取 JSON：优先直接解析，其次代码块，再次正则兜底。"""
+    """从容错文本中提取 JSON：优先直接解析，其次去 think 标签，再次代码块，最后正则兜底。"""
     if not isinstance(text, str):
         raise ValueError("LLM 返回内容不是字符串")
 
@@ -98,7 +99,14 @@ def _extract_json(text: str) -> Any:
     except ValueError:
         pass
 
-    # 2. 解析 ```json ... ``` 或 ``` ... ``` 代码块
+    # 2. 去除 <think>...</think> 标签（部分模型仍会输出思考内容）
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+
+    # 3. 解析 ```json ... ``` 或 ``` ... ``` 代码块
     code_block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if code_block:
         try:
@@ -106,7 +114,7 @@ def _extract_json(text: str) -> Any:
         except ValueError:
             pass
 
-    # 3. 正则提取第一个 {...} 或 [...]
+    # 4. 正则提取第一个 {...} 或 [...]
     obj_match = re.search(r"(\{[\s\S]*\})", text)
     if obj_match:
         try:
@@ -118,6 +126,15 @@ def _extract_json(text: str) -> Any:
     if arr_match:
         try:
             return json.loads(arr_match.group(1).strip())
+        except ValueError:
+            pass
+
+    # 5. 最后尝试：第一个 { 到最后一个 }
+    first = text.find("{")
+    last = text.rfind("}")
+    if first >= 0 and last > first:
+        try:
+            return json.loads(text[first:last + 1])
         except ValueError:
             pass
 
@@ -167,30 +184,48 @@ class _DashScopeClient:
             ],
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
+            # 关闭 Qwen3 思考模式（云端和 vLLM 均生效，不关会慢 16 倍）
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers(),
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError as exc:
-            logger.warning("attribute extraction http error: %s", exc)
-            raise AIException("属性提取服务不可用") from exc
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    resp = await client.post(
+                        f"{self._base_url}/chat/completions",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    # 某些 vLLM 不支持 response_format，收到 400 时移除重试
+                    if resp.status_code == 400 and "response_format" in resp.text:
+                        payload.pop("response_format", None)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
 
-        try:
-            content = data["choices"][0]["message"]["content"]
-            logger.info("[extract_attributes] image=%s raw_content=%s", image_url, content)
-            parsed = _extract_json(content)
-            logger.info("[extract_attributes] parsed=%s", parsed)
-            return parsed
-        except (KeyError, IndexError, ValueError, TypeError) as exc:
-            logger.warning("attribute extraction bad response: %s | %s", exc, data)
-            raise AIException("属性提取结果解析失败") from exc
+                content = data["choices"][0]["message"]["content"]
+                logger.info("[extract_attributes] image=%s raw_content=%s", image_url, content)
+                parsed = _extract_json(content)
+                logger.info("[extract_attributes] parsed=%s", parsed)
+                return parsed
+            except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+                last_exc = exc
+                logger.warning("attribute extraction timeout (attempt %d/3): %s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(5)
+                continue
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                logger.warning("attribute extraction http error (attempt %d/3): %s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(3)
+                continue
+            except (KeyError, IndexError, ValueError, TypeError) as exc:
+                logger.warning("attribute extraction bad response: %s | %s", exc, data)
+                raise AIException("属性提取结果解析失败") from exc
+
+        raise AIException(f"属性提取服务不可用(3次重试): {type(last_exc).__name__}: {last_exc}") from last_exc
 
     # -------------------- Embedding -------------------- #
     def _is_multimodal_embedding(self) -> bool:
@@ -254,8 +289,8 @@ class _DashScopeClient:
     ) -> list[dict[str, Any]]:
         """输入已格式化的用户 prompt，输出 top_n 精排结果 + 理由。
 
-        期望模型返回 JSON 数组：
-        [{"top_id": "...", "bottom_id": "...", "score": 8.5, "reason": "..."}, ...]
+        期望模型返回 JSON：
+        {"result": [{"outfit_id": "1", "score": 9.5, "reason": "..."}, ...]}
         """
         if not user_prompt:
             return []
@@ -270,6 +305,7 @@ class _DashScopeClient:
             ],
             "response_format": {"type": "json_object"},
             "temperature": 0.4,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
         try:
@@ -306,13 +342,13 @@ class _DashScopeClient:
         for entry in picks:
             if not isinstance(entry, dict):
                 continue
-            top_id = str(entry.get("top_id") or "")
-            bottom_id = str(entry.get("bottom_id") or "")
-            if not top_id or not bottom_id or (top_id, bottom_id) in seen:
+            outfit_id = str(entry.get("outfit_id") or "")
+            if not outfit_id or outfit_id in seen:
                 continue
             reason = str(entry.get("reason") or "").strip()
-            cleaned.append({"top_id": top_id, "bottom_id": bottom_id, "reason": reason[:80]})
-            seen.add((top_id, bottom_id))
+            score = entry.get("score", 0.0)
+            cleaned.append({"outfit_id": outfit_id, "score": score, "reason": reason[:120]})
+            seen.add(outfit_id)
             if len(cleaned) >= top_n:
                 break
 

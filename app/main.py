@@ -27,6 +27,7 @@ from app.api.v1.tasks import router as tasks_router
 from app.api.v1.tryon import router as tryon_router
 from app.api.v1.upload import router as upload_router
 from app.api.v1.users import router as users_router
+from app.api.v1.wardrobe_agent import router as wardrobe_agent_router
 from app.api.v1.wear_history import router as wear_history_router
 from app.core.config import settings
 from app.core.exceptions import AppException, app_exception_handler
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(favorites_router, prefix="/v1")
     app.include_router(users_router, prefix="/v1")
     app.include_router(upload_router, prefix="/v1")
+    app.include_router(wardrobe_agent_router, prefix="/v1")
 
     @app.get("/health")
     async def health():
