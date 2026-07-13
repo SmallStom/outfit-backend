@@ -103,3 +103,44 @@ class WearRecordResponse(BaseModel):
     success: bool = True
     wear_count: int
     last_worn_at: datetime | None = None
+
+
+# ---------- 批量导入 ----------
+
+
+class BatchImportItemResult(BaseModel):
+    """单张图片处理结果"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    status: str  # success | failed
+    item_id: UUID | None = None
+    image_url: str | None = None
+    error: str | None = None
+
+
+class BatchImportResponse(BaseModel):
+    """批量导入响应"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    batch_id: UUID
+    status: str
+    total: int
+    success: int
+    failed: int
+    items: list[BatchImportItemResult]
+
+
+class BatchImportStatusResponse(BaseModel):
+    """批量导入状态查询响应"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    batch_id: UUID
+    status: str
+    total: int
+    success: int
+    failed: int
+    created_at: datetime
+    items: list[ItemOut]

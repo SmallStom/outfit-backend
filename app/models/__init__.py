@@ -7,6 +7,7 @@ from app.models.favorite import FavoriteItem, FavoritePost
 from app.models.follow import UserFollow
 from app.models.item import Item
 from app.models.item_embedding import ItemEmbedding
+from app.models.import_batch import ImportBatch
 from app.models.membership import MembershipTier, UserMembership
 from app.models.model_template import ModelTemplate
 from app.models.order import Order
@@ -33,6 +34,7 @@ __all__ = [
     "UserFollow",
     "Item",
     "ItemEmbedding",
+    "ImportBatch",
     "Outfit",
     "OutfitItem",
     "OutfitCollection",

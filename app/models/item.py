@@ -14,6 +14,11 @@ class Item(Base, UUIDMixin, TimestampMixin):
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    batch_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("import_batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(100))
     category: Mapped[str] = mapped_column(String(20), index=True)
     sub_category: Mapped[str | None] = mapped_column(String(30), nullable=True)

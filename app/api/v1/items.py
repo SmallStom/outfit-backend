@@ -1,12 +1,16 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request
+from fastapi import APIRouter, BackgroundTasks, File, Query, Request, UploadFile
 
-from app.core.exceptions import AIException, NotFoundException
+from app.core.config import settings
+from app.core.exceptions import AIException, BadRequestException, NotFoundException
 from app.core.responses import success
 from app.db.dependencies import CurrentUserId, DbSession
 from app.schemas.item import (
+    BatchImportItemResult,
+    BatchImportResponse,
+    BatchImportStatusResponse,
     ItemCreate,
     ItemListResponse,
     ItemOut,
@@ -14,6 +18,8 @@ from app.schemas.item import (
     WearRecordResponse,
 )
 from app.services.ai.feature_extraction import enqueue_extraction
+from app.services.batch_import_service import batch_import, get_batch_status
+from app.services.image_util import validate_image
 from app.services.item_service import (
     COMMON_TAGS,
     create_item,
@@ -90,6 +96,83 @@ async def create_new_item(
     # 触发异步特征提取（MLLM 属性 + 视觉向量）
     background_tasks.add_task(enqueue_extraction, item.id)
     return success(data=ItemOut.model_validate(item).model_dump(by_alias=True))
+
+
+# ---------- 批量导入 ----------
+
+
+@router.post("/batch-import")
+async def batch_import_items(
+    files: list[UploadFile] = File(...),
+    db: DbSession = None,
+    user_id: CurrentUserId = None,
+    background_tasks: BackgroundTasks = None,
+):
+    """批量上传衣物图片 -> HighwayAPI 衣物提取 -> COS 保存 -> 创建 Item -> 后台属性提取。
+
+    每张图片独立处理：提取失败则创建 failed Item 并保留原图。
+    """
+    if not files:
+        raise BadRequestException("请至少上传一张图片")
+    if len(files) > settings.batch_import_max_files:
+        raise BadRequestException(f"单次最多上传 {settings.batch_import_max_files} 张图片")
+
+    # 校验所有图片
+    validated: list[tuple[bytes, str, str]] = []
+    for file in files:
+        suffix, content = validate_image(file)
+        ext = suffix.lstrip(".")
+        mime_ext = "jpeg" if ext == "jpg" else ext
+        content_type = f"image/{mime_ext}"
+        validated.append((content, ext, content_type))
+
+    # 批量处理
+    batch, results = await batch_import(
+        db=db,
+        user_id=UUID(user_id),
+        files=validated,
+        background_tasks=background_tasks,
+    )
+
+    return success(
+        data=BatchImportResponse(
+            batch_id=batch.id,
+            status=batch.status,
+            total=batch.total_count,
+            success=batch.success_count,
+            failed=batch.failed_count,
+            items=[
+                BatchImportItemResult(
+                    status=r["status"],
+                    item_id=r.get("item_id"),
+                    image_url=r.get("image_url"),
+                    error=r.get("error"),
+                )
+                for r in results
+            ],
+        ).model_dump(by_alias=True)
+    )
+
+
+@router.get("/batch-import/{batch_id}")
+async def get_batch_import_status_endpoint(
+    batch_id: UUID,
+    db: DbSession = None,
+    user_id: CurrentUserId = None,
+):
+    """查询批量导入任务状态。"""
+    result = await get_batch_status(db=db, user_id=UUID(user_id), batch_id=batch_id)
+    return success(
+        data=BatchImportStatusResponse(
+            batch_id=result["batch_id"],
+            status=result["status"],
+            total=result["total"],
+            success=result["success"],
+            failed=result["failed"],
+            created_at=result["created_at"],
+            items=[ItemOut.model_validate(item) for item in result["items"]],
+        ).model_dump(by_alias=True)
+    )
 
 
 @router.get("/{item_id}")
