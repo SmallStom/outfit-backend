@@ -2,6 +2,7 @@
 从响应中提取图片数据并用 Pillow 验证是否成功提取到衣物。"""
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
@@ -31,7 +32,10 @@ _WHITE_THRESHOLD = 240
 
 
 async def _call_highway_api(image_url: str) -> dict:
-    """调用 HighwayAPI GPT Image 2 Edit，返回原始 JSON 响应。"""
+    """调用 HighwayAPI GPT Image 2 Edit，返回原始 JSON 响应。
+
+    504 网关超时时自动重试（最多 3 次）。
+    """
     if not settings.highway_api_key:
         raise AIException("HighwayAPI 尚未配置 API Key")
 
@@ -45,32 +49,49 @@ async def _call_highway_api(image_url: str) -> dict:
         "output_format": "png",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{settings.highway_base_url}/{settings.highway_tryon_model}",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.highway_api_key}",
-                },
-                json=payload,
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{settings.highway_base_url}/{settings.highway_tryon_model}",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {settings.highway_api_key}",
+                    },
+                    json=payload,
+                )
+                # 504/502/503 时重试
+                if resp.status_code in (502, 503, 504) and attempt < 2:
+                    logger.warning(
+                        "HighwayAPI 返回 %d，第 %d 次重试...",
+                        resp.status_code, attempt + 1,
+                    )
+                    await asyncio.sleep(3)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.RequestError as exc:
+            last_exc = exc
+            if attempt < 2:
+                logger.warning("HighwayAPI 网络异常，第 %d 次重试: %s", attempt + 1, exc)
+                await asyncio.sleep(3)
+                continue
+            raise AIException("HighwayAPI 网络异常", timeout=True) from exc
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "HighwayAPI 衣物提取失败: %s - %s",
+                exc.response.status_code,
+                exc.response.text[:500],
             )
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "HighwayAPI 衣物提取失败: %s - %s",
-            exc.response.status_code,
-            exc.response.text[:500],
-        )
-        raise AIException("衣物提取失败，请稍后重试") from exc
-    except httpx.RequestError as exc:
-        raise AIException("HighwayAPI 网络异常", timeout=True) from exc
+            raise AIException("衣物提取失败，请稍后重试") from exc
+
+    raise AIException("HighwayAPI 多次重试后仍失败，请稍后重试") from last_exc
 
 
 async def _download_image_direct(url: str) -> tuple[bytes, str]:
     """从可信 URL 直接下载图片（HighwayAPI 返回的 CDN 链接，跳过 SSRF 检查）。"""
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "image/png").split(";")[0].strip()
