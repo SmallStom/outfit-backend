@@ -6,7 +6,7 @@
 3. 创建 ImportBatch 记录
 4. 对每张图片：
    a. 上传原图到 COS
-   b. HighwayAPI 提取衣物（透明背景 PNG）
+   b. HighwayAPI 提取衣物（纯白背景）
    c. Pillow 验证提取结果
    d. 保存提取图到 COS
    e. 创建 Item（batch_id 关联）
@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 os.environ["DEBUG"] = "false"
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.config import settings
 settings.debug = False
@@ -50,7 +50,6 @@ from app.models.item import Item
 from app.models.user import User
 from app.services.ai.feature_extraction import extract_and_store
 from app.services.batch_import_service import process_single_image
-from app.services.cos import upload_bytes_to_cos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("quick_import_test")

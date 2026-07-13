@@ -9,10 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import AIException
+from app.core.exceptions import AIException, NotFoundException
 from app.db.session import AsyncSessionLocal
 from app.models.import_batch import ImportBatch
 from app.models.item import Item
+from app.services.ai.feature_extraction import enqueue_extraction
 from app.services.cos import upload_bytes_to_cos
 from app.services.garment_extract_service import extract_and_validate_garment
 
@@ -75,7 +76,12 @@ async def process_single_image(
         original_url = await upload_bytes_to_cos(content, content_type, ext, folder="items")
     except Exception as exc:
         logger.error("批量导入 COS 上传原图失败: %s", exc)
-        return {"status": "failed", "error": "图片上传失败，请重试"}
+        item = await _create_item(
+            user_id, batch_id, "",
+            feature_status="failed",
+            feature_error=f"图片上传失败: {str(exc)[:200]}",
+        )
+        return {"status": "failed", "error": "图片上传失败，请重试", "item_id": item.id}
 
     # 2. 衣物提取 + 验证
     try:
@@ -159,7 +165,6 @@ async def batch_import(
 
     # 4. 为成功的 item 添加后台属性提取任务
     if background_tasks:
-        from app.services.ai.feature_extraction import enqueue_extraction
         for result in results:
             if result["status"] == "success" and result.get("item_id"):
                 background_tasks.add_task(enqueue_extraction, result["item_id"])
@@ -179,7 +184,6 @@ async def get_batch_status(
     )
     batch = result.scalar_one_or_none()
     if batch is None:
-        from app.core.exceptions import NotFoundException
         raise NotFoundException("批量导入任务不存在")
 
     items_result = await db.execute(

@@ -104,9 +104,9 @@ async def create_new_item(
 @router.post("/batch-import")
 async def batch_import_items(
     files: list[UploadFile] = File(...),
-    db: DbSession = None,
-    user_id: CurrentUserId = None,
-    background_tasks: BackgroundTasks = None,
+    db: DbSession,
+    user_id: CurrentUserId,
+    background_tasks: BackgroundTasks,
 ):
     """批量上传衣物图片 -> HighwayAPI 衣物提取 -> COS 保存 -> 创建 Item -> 后台属性提取。
 
@@ -157,8 +157,8 @@ async def batch_import_items(
 @router.get("/batch-import/{batch_id}")
 async def get_batch_import_status_endpoint(
     batch_id: UUID,
-    db: DbSession = None,
-    user_id: CurrentUserId = None,
+    db: DbSession,
+    user_id: CurrentUserId,
 ):
     """查询批量导入任务状态。"""
     result = await get_batch_status(db=db, user_id=UUID(user_id), batch_id=batch_id)

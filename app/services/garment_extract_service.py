@@ -1,4 +1,4 @@
-"""衣物提取服务：通过 HighwayAPI GPT Image 2 Edit 提取衣物（透明背景），
+"""衣物提取服务：通过 HighwayAPI GPT Image 2 Edit 提取衣物（纯白背景），
 下载结果并用 Pillow 验证是否成功提取到衣物。"""
 from __future__ import annotations
 
@@ -16,15 +16,18 @@ logger = logging.getLogger(__name__)
 GARMENT_EXTRACTION_PROMPT = (
     "Extract the main clothing garment from this image. "
     "Remove the entire background completely, including any person, mannequin, "
-    "hanger, props, or surface. Output only the garment itself on a fully "
-    "transparent background, showing the front view of the garment. "
+    "hanger, props, or surface. Output only the garment itself centered on a "
+    "pure white background (#FFFFFF), showing the front view of the garment. "
     "Preserve every detail: its exact silhouette, color, pattern, texture, "
     "stitching, folds, buttons, zippers, and natural shading. Do not alter, "
     "resize, restyle, or recolor the garment. The result must be a clean "
-    "cutout of only the clothing item with a transparent background."
+    "cutout of only the clothing item on a solid white background."
 )
 
 _GARMENT_NOT_FOUND_MSG = "未检测到衣物，请重新拍照上传标准衣物图片"
+
+# 白色像素判定阈值：RGB 均高于此值视为白色背景
+_WHITE_THRESHOLD = 240
 
 
 async def extract_garment(image_url: str) -> str:
@@ -41,7 +44,7 @@ async def extract_garment(image_url: str) -> str:
         "prompt": GARMENT_EXTRACTION_PROMPT,
         "size": settings.highway_tryon_size,
         "quality": settings.highway_extract_quality,
-        "background": "transparent",
+        "background": "opaque",
         "output_format": "png",
     }
 
@@ -76,40 +79,34 @@ async def extract_garment(image_url: str) -> str:
 
 
 def validate_garment_image(image_data: bytes) -> bool:
-    """验证提取结果是否包含有效衣物（非全透明）。
+    """验证提取结果是否包含有效衣物（非纯白空图）。
 
-    用 Pillow 检查 alpha 通道：
-    - 完全透明（bbox=None）-> False
-    - 非透明区域面积 < 总面积 5% -> False
+    统计非白色像素占比：
+    - 占比 < 3% -> False（几乎全白，提取失败）
     - 否则 -> True
     """
     from PIL import Image
 
     try:
-        img = Image.open(io.BytesIO(image_data))
+        img = Image.open(io.BytesIO(image_data)).convert("RGB")
     except Exception:
         logger.warning("无法打开提取结果图片进行验证")
         return False
 
-    if img.mode != "RGBA":
-        # 非透明图片，假设衣物提取成功
-        return True
-
-    alpha = img.getchannel("A")
-    bbox = alpha.getbbox()
-    if bbox is None:
-        # 完全透明
+    # 缩小采样以加速：缩放到 100x100
+    img = img.resize((100, 100))
+    pixels = list(img.getdata())
+    total = len(pixels)
+    if total == 0:
         return False
 
-    width, height = img.size
-    bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-    total_area = width * height
-    if total_area == 0:
-        return False
-
-    ratio = bbox_area / total_area
-    if ratio < 0.05:
-        logger.warning("提取结果非透明区域占比 %.1f%%，判定为提取失败", ratio * 100)
+    non_white = sum(
+        1 for r, g, b in pixels
+        if not (r >= _WHITE_THRESHOLD and g >= _WHITE_THRESHOLD and b >= _WHITE_THRESHOLD)
+    )
+    ratio = non_white / total
+    if ratio < 0.03:
+        logger.warning("提取结果非白色像素占比 %.1f%%，判定为提取失败", ratio * 100)
         return False
 
     return True
@@ -120,13 +117,13 @@ async def extract_and_validate_garment(image_url: str) -> tuple[bytes, str]:
 
     如果验证失败，raise AIException。
     """
-    # 1. 调用 HighwayAPI 提取衣物
+    # 1. 调用 HighwayAPI 提取衣物（白色背景）
     highway_url = await extract_garment(image_url)
 
     # 2. 下载结果图片（复用 cos.py 的下载逻辑，含 SSRF 防护）
     data, content_type, _ext = await _download_remote_image(highway_url)
 
-    # 3. 验证是否成功提取到衣物
+    # 3. 验证是否成功提取到衣物（非纯白空图）
     if not validate_garment_image(data):
         raise AIException(_GARMENT_NOT_FOUND_MSG)
 
