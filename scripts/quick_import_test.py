@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 from uuid import UUID
 
+import httpx
+
 # Windows 终端编码
 if sys.platform == "win32":
     try:
@@ -65,6 +67,9 @@ TEST_IMAGE_FILES = [
     "images/img_0185318.jpg",
 ]
 
+# 提取结果本地保存目录（方便肉眼对比验证）
+OUTPUT_DIR = Path(__file__).parent / "data" / "quick_import_output"
+
 
 # ==================== 工具函数 ==================== #
 
@@ -78,6 +83,15 @@ def _load_image(path: Path) -> tuple[bytes, str, str]:
         ext = "jpg"
     with open(path, "rb") as f:
         return f.read(), ext, f"image/{mime_type.split('/')[1]}"
+
+
+async def _download_image(url: str, save_path: Path) -> None:
+    """下载图片到本地文件。"""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_bytes(resp.content)
 
 
 async def _get_or_create_user(db) -> User:
@@ -195,21 +209,41 @@ async def main():
                 except Exception as exc:
                     logger.error("属性提取失败 item=%s: %s", item_id, exc)
 
-        # 6. 打印结果
+        # 6. 打印结果 + 下载提取图到本地
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         print(f"\n{'=' * 80}")
         print(f"  批量导入测试结果")
         print(f"{'=' * 80}")
         print(f"  Batch ID: {batch.id}")
         print(f"  状态: {batch.status}")
         print(f"  总计: {batch.total_count} | 成功: {batch.success_count} | 失败: {batch.failed_count}")
+        print(f"  本地输出目录: {OUTPUT_DIR}")
         print()
 
         for i, result in enumerate(results, 1):
             status_icon = "OK" if result["status"] == "success" else "FAIL"
+            original_name = Path(TEST_IMAGE_FILES[i-1]).stem
             print(f"  #{i} [{status_icon}] {TEST_IMAGE_FILES[i-1]}")
+
+            # 复制原图到输出目录方便对比
+            original_path = SHOP_DATA_DIR / TEST_IMAGE_FILES[i-1]
+            if original_path.exists():
+                local_original = OUTPUT_DIR / f"{original_name}_original.jpg"
+                local_original.write_bytes(original_path.read_bytes())
+                print(f"       原图(本地): {local_original}")
+
             if result["status"] == "success":
                 print(f"       Item ID: {result.get('item_id')}")
-                print(f"       提取图 URL: {result.get('image_url')}")
+                cos_url = result.get("image_url", "")
+                print(f"       提取图(COS): {cos_url}")
+
+                # 下载提取图到本地
+                local_extracted = OUTPUT_DIR / f"{original_name}_extracted.png"
+                try:
+                    await _download_image(cos_url, local_extracted)
+                    print(f"       提取图(本地): {local_extracted}")
+                except Exception as exc:
+                    logger.warning("下载提取图到本地失败: %s", exc)
 
                 # 查询 item 属性
                 if result.get("item_id"):

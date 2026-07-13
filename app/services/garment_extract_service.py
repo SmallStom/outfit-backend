@@ -49,7 +49,7 @@ async def extract_garment(image_url: str) -> str:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{settings.highway_base_url}/{settings.highway_tryon_model}",
                 headers={
