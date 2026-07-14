@@ -1,4 +1,4 @@
-"""批量导入测试：2 张图片走完整流程（HighwayAPI 衣物提取 + DashScope 属性提取）。
+"""批量导入测试：2 张图片走完整流程（images/edits 衣物提取 + DashScope 属性提取）。
 
 流程：
 1. 创建/获取 stom 用户
@@ -6,7 +6,7 @@
 3. 创建 ImportBatch 记录
 4. 对每张图片：
    a. 上传原图到 COS
-   b. HighwayAPI 提取衣物（纯白背景）
+   b. images/edits API 提取衣物（纯白背景）
    c. Pillow 验证提取结果
    d. 保存提取图到 COS
    e. 创建 Item（batch_id 关联）
@@ -117,8 +117,8 @@ async def main():
     logger.info("=" * 60)
 
     # 验证配置
-    if not settings.highway_api_key:
-        logger.error("HIGHWAY_API_KEY 未配置，无法测试衣物提取")
+    if not settings.image_edit_api_key:
+        logger.error("IMAGE_EDIT_API_KEY 未配置，无法测试衣物提取")
         return
     if not settings.ai_api_key:
         logger.error("AI_API_KEY 未配置，无法测试属性提取")

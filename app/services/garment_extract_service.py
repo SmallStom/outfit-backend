@@ -1,4 +1,4 @@
-"""衣物提取服务：通过 HighwayAPI GPT Image 2 Edit 提取衣物（纯白背景），
+"""衣物提取服务：通过 OpenAI 兼容 images/edits 接口提取衣物（纯白背景），
 从响应中提取图片数据并用 Pillow 验证是否成功提取到衣物。"""
 from __future__ import annotations
 
@@ -31,40 +31,57 @@ _GARMENT_NOT_FOUND_MSG = "未检测到衣物，请重新拍照上传标准衣物
 _WHITE_THRESHOLD = 240
 
 
-async def _call_highway_api(image_url: str) -> dict:
-    """调用 HighwayAPI GPT Image 2 Edit，返回原始 JSON 响应。
+async def _download_image_direct(url: str) -> tuple[bytes, str]:
+    """从可信 URL 直接下载图片（跳过 SSRF 检查，trust_env=False 绕过代理）。"""
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        return resp.content, content_type
 
-    504 网关超时时自动重试（最多 3 次）。
+
+async def _call_image_edit_api(image_url: str) -> dict:
+    """调用 OpenAI 兼容 images/edits 接口，返回原始 JSON 响应。
+
+    流程：下载原图 -> multipart form-data 上传 -> 返回 JSON。
+    502/503/504 时自动重试（最多 3 次）。
     """
-    if not settings.highway_api_key:
-        raise AIException("HighwayAPI 尚未配置 API Key")
+    if not settings.image_edit_api_key:
+        raise AIException("衣物提取 API 尚未配置 API Key")
 
-    payload: dict = {
-        "n": 1,
-        "image": [image_url],
+    # 1. 下载原图
+    image_data, content_type = await _download_image_direct(image_url)
+    ext = "jpg" if "jpeg" in content_type or "jpg" in content_type else "png"
+
+    # 2. 构建 multipart form data
+    files = {"image": (f"input.{ext}", image_data, content_type)}
+    data = {
+        "model": settings.image_edit_model,
         "prompt": GARMENT_EXTRACTION_PROMPT,
-        "size": settings.highway_tryon_size,
-        "quality": settings.highway_extract_quality,
+        "n": "1",
+        "size": settings.image_edit_size,
+        "quality": settings.image_edit_quality,
         "background": "opaque",
         "output_format": "png",
     }
 
+    url = f"{settings.image_edit_base_url}/images/edits"
+
+    # 3. 调用 API（带重试）
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
-                    f"{settings.highway_base_url}/{settings.highway_tryon_model}",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {settings.highway_api_key}",
-                    },
-                    json=payload,
+                    url,
+                    headers={"Authorization": f"Bearer {settings.image_edit_api_key}"},
+                    files=files,
+                    data=data,
                 )
-                # 504/502/503 时重试
+                # 502/503/504 时重试
                 if resp.status_code in (502, 503, 504) and attempt < 2:
                     logger.warning(
-                        "HighwayAPI 返回 %d，第 %d 次重试...",
+                        "images/edits 返回 %d，第 %d 次重试...",
                         resp.status_code, attempt + 1,
                     )
                     await asyncio.sleep(3)
@@ -74,77 +91,68 @@ async def _call_highway_api(image_url: str) -> dict:
         except httpx.RequestError as exc:
             last_exc = exc
             if attempt < 2:
-                logger.warning("HighwayAPI 网络异常，第 %d 次重试: %s", attempt + 1, exc)
+                logger.warning("images/edits 网络异常，第 %d 次重试: %s", attempt + 1, exc)
                 await asyncio.sleep(3)
                 continue
-            raise AIException("HighwayAPI 网络异常", timeout=True) from exc
+            raise AIException("衣物提取 API 网络异常", timeout=True) from exc
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "HighwayAPI 衣物提取失败: %s - %s",
+                "images/edits 衣物提取失败: %s - %s",
                 exc.response.status_code,
                 exc.response.text[:500],
             )
             raise AIException("衣物提取失败，请稍后重试") from exc
 
-    raise AIException("HighwayAPI 多次重试后仍失败，请稍后重试") from last_exc
-
-
-async def _download_image_direct(url: str) -> tuple[bytes, str]:
-    """从可信 URL 直接下载图片（HighwayAPI 返回的 CDN 链接，跳过 SSRF 检查）。"""
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        content_type = resp.headers.get("content-type", "image/png").split(";")[0].strip()
-        return resp.content, content_type
+    raise AIException("衣物提取 API 多次重试后仍失败，请稍后重试") from last_exc
 
 
 async def _extract_image_from_response(data: dict) -> tuple[bytes, str]:
-    """从 HighwayAPI 响应中提取图片字节，兼容多种返回格式。
+    """从 OpenAI images/edits 响应中提取图片字节。
 
     支持的格式：
-    1. {"images": [{"b64_json": "..."}]}
-    2. {"images": [{"url": "https://..."}]}
-    3. {"images": ["data:image/png;base64,..."]}
-    4. {"images": ["https://..."]}
-    5. {"data": [{"b64_json": "..."}]}  (OpenAI 原始格式)
+    1. {"data": [{"b64_json": "..."}]}  (OpenAI gpt-image-1 标准格式)
+    2. {"data": [{"url": "https://..."}]}
+    3. {"images": [{"b64_json": "..."}]}
+    4. {"images": [{"url": "https://..."}]}
+    5. {"images": ["data:image/png;base64,..."]}
+    6. {"images": ["https://..."]}
     """
-    images = data.get("images") or data.get("data") or []
-    if not images:
-        raise AIException("HighwayAPI 未返回结果图片")
+    items = data.get("data") or data.get("images") or []
+    if not items:
+        raise AIException("衣物提取 API 未返回结果图片")
 
-    first = images[0]
+    first = items[0]
 
-    # 格式 1/5: dict with b64_json or url
+    # dict 格式：b64_json 或 url
     if isinstance(first, dict):
         b64 = first.get("b64_json") or first.get("b64")
         if b64 and isinstance(b64, str):
-            logger.info("HighwayAPI 返回 b64_json 格式图片")
+            logger.info("API 返回 b64_json 格式图片")
             return base64.b64decode(b64), "image/png"
         url = first.get("url")
         if url and isinstance(url, str):
-            logger.info("HighwayAPI 返回 dict.url 格式，下载: %s", url[:100])
+            logger.info("API 返回 URL 格式，下载: %s", url[:100])
             return await _download_image_direct(url)
 
-    # 格式 2/4: string
+    # string 格式
     if isinstance(first, str):
         if first.startswith("data:"):
-            # data:image/png;base64,iVBOR...
-            logger.info("HighwayAPI 返回 data URL 格式图片")
+            logger.info("API 返回 data URL 格式图片")
             _, b64 = first.split(",", 1)
             return base64.b64decode(b64), "image/png"
         if first.startswith("http"):
-            logger.info("HighwayAPI 返回 URL 格式，下载: %s", first[:100])
+            logger.info("API 返回 URL 格式，下载: %s", first[:100])
             return await _download_image_direct(first)
-        # 尝试当 raw base64 解码
+        # raw base64
         try:
             decoded = base64.b64decode(first, validate=True)
             if len(decoded) > 100:
-                logger.info("HighwayAPI 返回 raw base64 格式图片")
+                logger.info("API 返回 raw base64 格式图片")
                 return decoded, "image/png"
         except Exception:
             pass
 
-    raise AIException("HighwayAPI 返回的图片格式无法识别")
+    raise AIException("衣物提取 API 返回的图片格式无法识别")
 
 
 def validate_garment_image(image_data: bytes) -> bool:
@@ -182,14 +190,14 @@ def validate_garment_image(image_data: bytes) -> bool:
 
 
 async def extract_and_validate_garment(image_url: str) -> tuple[bytes, str]:
-    """完整提取流程：调用 HighwayAPI -> 提取图片 -> 验证 -> 返回 (image_data, content_type)。
+    """完整提取流程：调用 images/edits -> 提取图片 -> 验证 -> 返回 (image_data, content_type)。
 
     如果验证失败，raise AIException。
     """
-    # 1. 调用 HighwayAPI
-    data = await _call_highway_api(image_url)
+    # 1. 调用 images/edits API
+    data = await _call_image_edit_api(image_url)
 
-    # 2. 从响应中提取图片字节（兼容 base64 / data URL / URL 等格式）
+    # 2. 从响应中提取图片字节
     image_data, content_type = await _extract_image_from_response(data)
 
     logger.info(
