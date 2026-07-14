@@ -16,7 +16,7 @@ from app.core.exceptions import AIException, BadRequestException, ForbiddenExcep
 from app.models.item import Item
 from app.models.tryon_preset import TryonPreset
 from app.models.tryon_result import TryonResult
-from app.services.cos import upload_image_url_to_cos
+from app.services.cos import upload_bytes_to_cos, upload_image_url_to_cos
 from app.services.quota_service import deduct_for_tryon
 from app.services.task_service import complete_task
 
@@ -235,17 +235,17 @@ def _validate_public_url(url: str | None, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# HighwayAPI GPT Image 2 Edit virtual try-on
+# OpenAI 兼容 images/edits 虚拟试穿
 # ---------------------------------------------------------------------------
 
 
-def _build_highway_image_list(
+def _build_image_list(
     person_image_url: str,
     top_url: str | None,
     bottom_url: str | None,
     outer_url: str | None,
 ) -> list[str]:
-    """把人物图和衣物图合并成 HighwayAPI 的 image 数组。"""
+    """把人物图和衣物图合并成 image URL 数组。"""
     images = [person_image_url]
     for garment_url in [top_url, bottom_url, outer_url]:
         if garment_url:
@@ -253,12 +253,12 @@ def _build_highway_image_list(
     return images
 
 
-def _build_highway_prompt(
+def _build_tryon_prompt(
     top_url: str | None,
     bottom_url: str | None,
     outer_url: str | None,
 ) -> str:
-    """根据选择的衣物类型生成对应的 HighwayAPI 提示词。"""
+    """根据选择的衣物类型生成对应的试衣提示词。"""
     has_top = bool(top_url)
     has_bottom = bool(bottom_url)
     has_outer = bool(outer_url)
@@ -294,7 +294,7 @@ def _build_highway_prompt(
     )
 
 
-async def _submit_highway_tryon(
+async def _submit_image_edit_tryon(
     db: AsyncSession,
     user_id: UUID,
     mode: str,
@@ -303,53 +303,84 @@ async def _submit_highway_tryon(
     bottom_url: str | None,
     outer_url: str | None,
 ) -> TryonResult:
-    """调用 HighwayAPI GPT Image 2 Edit 同步生成试衣图并持久化。"""
-    if not settings.highway_api_key:
-        raise AIException("HighwayAPI 尚未配置 API Key")
+    """调用 OpenAI 兼容 images/edits 接口同步生成试衣图并持久化。"""
+    if not settings.image_edit_api_key:
+        raise AIException("图片编辑 API 尚未配置 API Key")
 
-    payload: dict = {
-        "n": 1,
-        "image": _build_highway_image_list(
-            person_image_url, top_url, bottom_url, outer_url
-        ),
-        "prompt": _build_highway_prompt(top_url, bottom_url, outer_url),
-        "size": settings.highway_tryon_size,
-        "quality": settings.highway_tryon_quality,
+    from app.services.garment_extract_service import _download_image_direct
+
+    # 1. 下载所有图片
+    image_urls = _build_image_list(person_image_url, top_url, bottom_url, outer_url)
+    downloaded: list[tuple[str, bytes, str]] = []
+    for url in image_urls:
+        img_data, ct = await _download_image_direct(url)
+        ext = "jpg" if "jpeg" in ct or "jpg" in ct else "png"
+        downloaded.append((ext, img_data, ct))
+
+    # 2. 构建 multipart form-data（多图用 image[] 字段）
+    files: list[tuple[str, tuple[str, bytes, str]]] = []
+    for i, (ext, img_data, ct) in enumerate(downloaded):
+        files.append(("image[]", (f"image_{i}.{ext}", img_data, ct)))
+
+    data = {
+        "model": settings.image_edit_model,
+        "prompt": _build_tryon_prompt(top_url, bottom_url, outer_url),
+        "n": "1",
+        "size": settings.image_edit_size,
+        "quality": settings.image_edit_quality,
         "background": "auto",
         "output_format": "png",
     }
 
+    url = f"{settings.image_edit_base_url}/images/edits"
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
-                f"{settings.highway_base_url}/{settings.highway_tryon_model}",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.highway_api_key}",
-                },
-                json=payload,
+                url,
+                headers={"Authorization": f"Bearer {settings.image_edit_api_key}"},
+                files=files,
+                data=data,
             )
             resp.raise_for_status()
-            data = resp.json()
+            result = resp.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("HighwayAPI 试衣失败: %s - %s", exc.response.status_code, exc.response.text)
-        raise AIException("HighwayAPI 试衣失败，请稍后重试") from exc
+        logger.error("images/edits 试衣失败: %s - %s", exc.response.status_code, exc.response.text[:500])
+        raise AIException("试衣失败，请稍后重试") from exc
     except httpx.RequestError as exc:
-        raise AIException("HighwayAPI 网络异常", timeout=True) from exc
+        raise AIException("试衣 API 网络异常", timeout=True) from exc
 
-    images = data.get("images") or []
-    image_url = images[0] if images else None
-    if not image_url:
-        raise AIException("HighwayAPI 未返回结果图片")
+    # 3. 从响应提取图片（b64_json 或 url）
+    import base64 as _b64
 
-    # 上传到我们自己的 COS，避免第三方 URL 过期
-    cos_url = await upload_image_url_to_cos(image_url, folder="tryon")
+    items = result.get("data") or result.get("images") or []
+    if not items:
+        raise AIException("试衣 API 未返回结果图片")
+
+    first = items[0]
+    image_bytes: bytes | None = None
+    if isinstance(first, dict):
+        b64_str = first.get("b64_json") or first.get("b64")
+        if b64_str:
+            image_bytes = _b64.b64decode(b64_str)
+        else:
+            result_url = first.get("url")
+            if result_url:
+                image_bytes, _ = await _download_image_direct(result_url)
+    elif isinstance(first, str) and first.startswith("http"):
+        image_bytes, _ = await _download_image_direct(first)
+
+    if not image_bytes:
+        raise AIException("试衣 API 返回的图片格式无法识别")
+
+    # 4. 上传到 COS
+    cos_url = await upload_bytes_to_cos(image_bytes, "image/png", "png", folder="tryon")
 
     tryon_result = TryonResult(
         user_id=user_id,
         mode=mode,
-        model=settings.highway_tryon_model,
-        provider="highway",
+        model=settings.image_edit_model,
+        provider="image_edit",
         person_image_url=person_image_url,
         top_garment_url=top_url,
         bottom_garment_url=bottom_url,
@@ -454,7 +485,7 @@ async def generate_tryon(
     bottom_item_id: UUID | None = None,
     outer_item_id: UUID | None = None,
 ) -> dict:
-    """提交虚拟试衣任务，默认使用 HighwayAPI，失败时回退阿里云。"""
+    """提交虚拟试衣任务，默认使用 images/edits API，失败时回退阿里云。"""
     # 额度校验与扣减
     quota = await deduct_for_tryon(db=db, user_id=user_id)
     if not quota.get("allowed") or not quota.get("deducted"):
@@ -480,15 +511,15 @@ async def generate_tryon(
     _validate_public_url(top_url, "上装图片")
     _validate_public_url(bottom_url, "下装图片")
 
-    use_highway = (
-        settings.tryon_provider == "highway"
-        and bool(settings.highway_api_key)
+    use_image_edit = (
+        settings.tryon_provider == "image_edit"
+        and bool(settings.image_edit_api_key)
     )
     tryon_result: TryonResult | None = None
 
-    if use_highway:
+    if use_image_edit:
         try:
-            tryon_result = await _submit_highway_tryon(
+            tryon_result = await _submit_image_edit_tryon(
                 db=db,
                 user_id=user_id,
                 mode=mode,
@@ -498,7 +529,7 @@ async def generate_tryon(
                 outer_url=None,
             )
         except (AIException, httpx.HTTPStatusError, httpx.RequestError) as exc:
-            logger.warning("HighwayAPI 试衣失败: %s", exc)
+            logger.warning("images/edits 试衣失败: %s", exc)
             if not settings.tryon_fallback_to_aliyun:
                 raise
 
@@ -599,12 +630,12 @@ async def _refresh_aliyun_tryon(tryon_result: TryonResult) -> None:
 async def refresh_tryon_result(
     db: AsyncSession, tryon_result: TryonResult
 ) -> TryonResult:
-    """刷新任务状态（HighwayAPI 为同步返回，阿里云需轮询）。"""
+    """刷新任务状态（images/edits 为同步返回，阿里云需轮询）。"""
     if tryon_result.status in ("succeeded", "failed"):
         return tryon_result
 
-    # HighwayAPI 是同步接口，提交时已经拿到结果图
-    if tryon_result.provider == "highway":
+    # images/edits 是同步接口，提交时已经拿到结果图
+    if tryon_result.provider == "image_edit":
         return tryon_result
 
     await _refresh_aliyun_tryon(tryon_result)

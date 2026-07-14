@@ -54,23 +54,10 @@ class Settings(BaseSettings):
     tryon_fast_model: str = Field(default="aitryon", alias="TRYON_FAST_MODEL")
     tryon_premium_model: str = Field(default="aitryon-plus", alias="TRYON_PREMIUM_MODEL")
 
-    # HighwayAPI virtual try-on (default provider, fallback to Aliyun on failure)
-    tryon_provider: str = Field(default="highway", alias="TRYON_PROVIDER")
+    # 图片编辑 API（OpenAI 兼容 images/edits，试穿 + 衣物提取共用）
+    tryon_provider: str = Field(default="image_edit", alias="TRYON_PROVIDER")
     tryon_fallback_to_aliyun: bool = Field(default=True, alias="TRYON_FALLBACK_TO_ALIYUN")
 
-    highway_api_key: str = Field(default="", alias="HIGHWAY_API_KEY")
-    highway_base_url: str = Field(
-        default="https://api.highwayapi.ai/v3", alias="HIGHWAY_BASE_URL"
-    )
-    highway_tryon_model: str = Field(default="gpt-image-2-edit", alias="HIGHWAY_TRYON_MODEL")
-    highway_tryon_size: str = Field(default="1024x1024", alias="HIGHWAY_TRYON_SIZE")
-    highway_tryon_quality: str = Field(default="low", alias="HIGHWAY_TRYON_QUALITY")
-
-    # 批量导入
-    batch_import_concurrency: int = Field(default=3, alias="BATCH_IMPORT_CONCURRENCY")
-    batch_import_max_files: int = Field(default=20, alias="BATCH_IMPORT_MAX_FILES")
-
-    # 衣物提取 API（OpenAI 兼容 images/edits 接口）
     image_edit_base_url: str = Field(
         default="https://www.dmxapi.cn/v1", alias="IMAGE_EDIT_BASE_URL"
     )
@@ -78,6 +65,10 @@ class Settings(BaseSettings):
     image_edit_model: str = Field(default="gpt-image-1", alias="IMAGE_EDIT_MODEL")
     image_edit_quality: str = Field(default="low", alias="IMAGE_EDIT_QUALITY")
     image_edit_size: str = Field(default="1024x1024", alias="IMAGE_EDIT_SIZE")
+
+    # 批量导入
+    batch_import_concurrency: int = Field(default=3, alias="BATCH_IMPORT_CONCURRENCY")
+    batch_import_max_files: int = Field(default=20, alias="BATCH_IMPORT_MAX_FILES")
 
     # 阿里云 AI 试衣-图片分割模型，官方模型名：aitryon-parsing-v1
     tryon_segment_model: str = Field(default="aitryon-parsing-v1", alias="TRYON_SEGMENT_MODEL")

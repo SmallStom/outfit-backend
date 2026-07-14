@@ -108,7 +108,7 @@ async def batch_import_items(
     user_id: CurrentUserId,
     background_tasks: BackgroundTasks,
 ):
-    """批量上传衣物图片 -> HighwayAPI 衣物提取 -> COS 保存 -> 创建 Item -> 后台属性提取。
+    """批量上传衣物图片 -> images/edits 衣物提取 -> COS 保存 -> 创建 Item -> 后台属性提取。
 
     每张图片独立处理：提取失败则创建 failed Item 并保留原图。
     """
