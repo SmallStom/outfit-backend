@@ -13,9 +13,13 @@ from app.core.exceptions import AIException, NotFoundException
 from app.db.session import AsyncSessionLocal
 from app.models.import_batch import ImportBatch
 from app.models.item import Item
-from app.services.ai.feature_extraction import enqueue_extraction
+from app.services.ai.feature_extraction import enqueue_extraction, extract_and_store
 from app.services.cos import upload_bytes_to_cos
-from app.services.garment_extract_service import extract_and_validate_garment
+from app.services.garment_extract_service import (
+    category_to_clothes_type,
+    extract_and_validate_garment,
+    extract_garment_aliyun_parsing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,90 @@ async def _create_item(
         return item
 
 
+async def _update_item_image(item_id: UUID, image_url: str) -> None:
+    """在独立 session 中更新 Item 的 image_url。"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Item).where(Item.id == item_id))
+        item = result.scalar_one_or_none()
+        if item is not None:
+            item.image_url = image_url
+            await session.commit()
+
+
+async def _process_aliyun_parsing(
+    user_id: UUID,
+    batch_id: UUID,
+    original_url: str,
+) -> dict:
+    """aliyun_parsing 方式：先属性提取拿 category，再调 aitryon-parsing-v1 分割。
+
+    流程：
+    1. 用原图创建 Item
+    2. 同步调 extract_and_store（属性提取 + embedding）
+    3. 读取 category，调 aitryon-parsing-v1 分割
+    4. 上传分割图，更新 Item.image_url
+    """
+    # 1. 创建 Item（先用原图）
+    item = await _create_item(
+        user_id, batch_id, original_url,
+        feature_status="processing",
+    )
+
+    # 2. 同步属性提取
+    async with AsyncSessionLocal() as session:
+        try:
+            await extract_and_store(session, item.id)
+        except Exception as exc:
+            logger.exception("aliyun_parsing 属性提取异常 item=%s", item.id)
+            return {"status": "failed", "error": "属性提取失败", "item_id": item.id}
+
+    # 3. 读取提取后的 category
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Item).where(Item.id == item.id))
+        updated_item = result.scalar_one_or_none()
+        if updated_item is None:
+            return {"status": "failed", "error": "Item 不存在", "item_id": item.id}
+
+        if updated_item.feature_status != "success":
+            return {
+                "status": "failed",
+                "error": updated_item.feature_error or "属性提取失败",
+                "item_id": item.id,
+            }
+
+        category = updated_item.category or ""
+
+    # 4. 不支持的分类 -> 跳过分割，保留原图
+    clothes_type = category_to_clothes_type(category)
+    if clothes_type is None:
+        logger.info("aliyun_parsing 跳过分割（分类 %s 不支持），保留原图 item=%s", category, item.id)
+        return {"status": "success", "item_id": item.id, "image_url": original_url}
+
+    # 5. 调 aitryon-parsing-v1 分割
+    try:
+        garment_data, garment_ct = await extract_garment_aliyun_parsing(original_url, clothes_type)
+    except AIException as exc:
+        logger.warning("aliyun_parsing 分割失败 item=%s: %s", item.id, exc)
+        # 分割失败但属性提取已成功，保留原图
+        return {"status": "success", "item_id": item.id, "image_url": original_url}
+    except Exception:
+        logger.exception("aliyun_parsing 分割异常 item=%s", item.id)
+        return {"status": "success", "item_id": item.id, "image_url": original_url}
+
+    # 6. 上传分割图到 COS
+    try:
+        ext = "png" if "png" in garment_ct else "jpg"
+        garment_url = await upload_bytes_to_cos(garment_data, garment_ct, ext, folder="items")
+    except Exception as exc:
+        logger.error("aliyun_parsing COS 上传失败 item=%s: %s", item.id, exc)
+        return {"status": "success", "item_id": item.id, "image_url": original_url}
+
+    # 7. 更新 Item.image_url
+    await _update_item_image(item.id, garment_url)
+    logger.info("aliyun_parsing 成功 item=%s image=%s", item.id, garment_url)
+    return {"status": "success", "item_id": item.id, "image_url": garment_url}
+
+
 async def process_single_image(
     user_id: UUID,
     batch_id: UUID,
@@ -68,6 +156,10 @@ async def process_single_image(
     content_type: str,
 ) -> dict:
     """处理单张图片的完整流程（在并发信号量内执行）。
+
+    根据 GARMENT_EXTRACT_METHOD 配置选择提取方式：
+    - image_edit: 先 GPT 图片编辑提取衣物，再后台属性提取
+    - aliyun_parsing: 先属性提取拿 category，再调 aitryon-parsing-v1 分割
 
     返回 {status, item_id, image_url, error}
     """
@@ -83,7 +175,14 @@ async def process_single_image(
         )
         return {"status": "failed", "error": "图片上传失败，请重试", "item_id": item.id}
 
-    # 2. 衣物提取 + 验证
+    # 2. 按配置选择提取方式
+    method = settings.garment_extract_method
+
+    if method == "aliyun_parsing":
+        # aliyun_parsing: 先属性提取 -> 再分割
+        return await _process_aliyun_parsing(user_id, batch_id, original_url)
+
+    # image_edit（默认）: 先 GPT 提取衣物 -> 创建 Item -> 后台属性提取
     try:
         garment_data, garment_ct = await extract_and_validate_garment(original_url)
     except AIException as exc:
@@ -163,8 +262,8 @@ async def batch_import(
     await db.commit()
     await db.refresh(batch)
 
-    # 4. 为成功的 item 添加后台属性提取任务
-    if background_tasks:
+    # 4. 为成功的 item 添加后台属性提取任务（仅 image_edit 方式需要）
+    if background_tasks and settings.garment_extract_method != "aliyun_parsing":
         for result in results:
             if result["status"] == "success" and result.get("item_id"):
                 background_tasks.add_task(enqueue_extraction, result["item_id"])

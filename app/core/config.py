@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # 批量导入
     batch_import_concurrency: int = Field(default=3, alias="BATCH_IMPORT_CONCURRENCY")
     batch_import_max_files: int = Field(default=20, alias="BATCH_IMPORT_MAX_FILES")
+    garment_extract_method: str = Field(default="image_edit", alias="GARMENT_EXTRACT_METHOD")
 
     # 阿里云 AI 试衣-图片分割模型，官方模型名：aitryon-parsing-v1
     tryon_segment_model: str = Field(default="aitryon-parsing-v1", alias="TRYON_SEGMENT_MODEL")

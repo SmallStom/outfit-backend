@@ -211,3 +211,110 @@ async def extract_and_validate_garment(image_url: str) -> tuple[bytes, str]:
         raise AIException(_GARMENT_NOT_FOUND_MSG)
 
     return image_data, content_type
+
+
+# ---------------------------------------------------------------------------
+# 方法二：阿里云 aitryon-parsing-v1 服饰分割
+# 官方文档：https://help.aliyun.com/zh/model-studio/aitryon-parsing-api
+# ---------------------------------------------------------------------------
+
+# 官方 clothes_type 合法值
+_SUPPORTED_CLOTHES_TYPES = {"upper", "lower", "dress"}
+
+# 内部 category -> 官方 clothes_type 映射
+_CATEGORY_TO_CLOTHES_TYPE: dict[str, str] = {
+    "top": "upper",
+    "bottom": "lower",
+    "dress": "dress",
+    "outer": "upper",
+    "outerwear": "upper",
+}
+
+
+def category_to_clothes_type(category: str) -> str | None:
+    """将内部 category 映射为官方 clothes_type，不支持则返回 None。"""
+    return _CATEGORY_TO_CLOTHES_TYPE.get(category)
+
+
+def _is_parsing_supported(category: str) -> bool:
+    """判断该分类是否被 aitryon-parsing-v1 支持。"""
+    return category in _CATEGORY_TO_CLOTHES_TYPE
+
+
+def _flatten_on_white_bg(image_data: bytes) -> bytes:
+    """将 RGBA 透明背景图片合成到纯白背景上，返回 RGB PNG 字节。"""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(image_data)).convert("RGBA")
+    white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    composite = Image.alpha_composite(white_bg, img).convert("RGB")
+    buf = io.BytesIO()
+    composite.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def extract_garment_aliyun_parsing(
+    image_url: str, clothes_type: str
+) -> tuple[bytes, str]:
+    """通过阿里云 aitryon-parsing-v1 分割服饰，返回纯白背景 PNG 图片字节。
+
+    Args:
+        image_url: 输入图片 URL（模特图或 AI 试衣图）
+        clothes_type: 官方参数，值为 upper | lower | dress
+    """
+    if clothes_type not in _SUPPORTED_CLOTHES_TYPES:
+        raise AIException(f"不支持的 clothes_type: {clothes_type}")
+
+    payload = {
+        "model": settings.tryon_segment_model,
+        "input": {"image_url": image_url},
+        "parameters": {"clothes_type": [clothes_type]},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.tryon_segment_base_url}/services/vision/image-process/process",
+                headers={
+                    "Authorization": f"Bearer {settings.tryon_segment_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "aitryon-parsing 请求失败: %s - %s",
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
+        raise AIException("服饰分割服务调用失败") from exc
+    except httpx.RequestError as exc:
+        raise AIException("服饰分割服务网络异常", timeout=True) from exc
+
+    output = data.get("output", {})
+    parsing_urls = output.get("parsing_img_url") or []
+    crop_urls = output.get("crop_img_url") or []
+
+    # 优先 parsing_img_url（RGBA 透明底），其次 crop_img_url（RGB 裁剪图）
+    result_url = parsing_urls[0] if parsing_urls else (crop_urls[0] if crop_urls else None)
+    if not result_url:
+        logger.error("aitryon-parsing 未返回图片: %s", data)
+        raise AIException("服饰分割未返回结果图片")
+
+    # 下载结果图片
+    image_data, content_type = await _download_image_direct(result_url)
+
+    # 如果是 RGBA 透明底，合成到纯白背景
+    if parsing_urls and not crop_urls:
+        image_data = _flatten_on_white_bg(image_data)
+        content_type = "image/png"
+
+    logger.info(
+        "aitryon-parsing 分割成功，图片大小=%.1fKB, clothes_type=%s",
+        len(image_data) / 1024,
+        clothes_type,
+    )
+
+    return image_data, content_type
